@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Plus, Users, Clock, CheckCircle } from 'lucide-react';
+import { Plus, Users, Clock, CheckCircle, CircleCheck, UtensilsCrossed, Sparkles, CalendarClock } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Btn } from '@/components/ui';
 import { Receipt } from 'lucide-react';
@@ -14,6 +14,7 @@ interface EstadoConfig {
   label: string;
   color: string;
   bg: string;
+  icon: React.ElementType;
 }
 
 interface Mesa {
@@ -28,10 +29,10 @@ interface Mesa {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 const ESTADOS: Record<EstadoKey, EstadoConfig> = {
-  disponible: { label: 'Disponible',   color: '#5C7A3E', bg: '#e8f5e2' },
-  ocupada:    { label: 'Ocupada',      color: '#D4673A', bg: '#fef0e6' },
-  limpieza:   { label: 'En limpieza', color: '#C9A84C', bg: '#fdf8e6' },
-  reservada:  { label: 'Reservada',   color: '#4A6FA5', bg: '#e8f0fb' },
+  disponible: { label: 'Disponible',   color: '#5C7A3E', bg: '#e8f5e2', icon: CircleCheck },
+  ocupada:    { label: 'Ocupada',      color: '#D4673A', bg: '#fef0e6', icon: UtensilsCrossed },
+  limpieza:   { label: 'Limpieza', color: '#C9A84C', bg: '#fdf8e6', icon: Sparkles },
+  reservada:  { label: 'Reservada',   color: '#4A6FA5', bg: '#e8f0fb', icon: CalendarClock },
 };
 
 const INITIAL_MESAS: Mesa[] = [
@@ -53,14 +54,44 @@ const INITIAL_MESAS: Mesa[] = [
   { id: 'B03', zona: 'Barra',           cap: 2, estado: 'disponible', cliente: null,            hora: null,    pedido: null },
 ];
 
+// ─── Ilustraciones por estado (PNG desde /public/icons/) ──────────────────────
+const ICONOS: Record<EstadoKey, string> = {
+  disponible: '/icons/disponible.png',
+  ocupada:    '/icons/ocupada.png',
+  limpieza:   '/icons/limpieza.png',
+  reservada:  '/icons/reservada.png',
+};
+
+// Convierte un color hex a un CSS filter que tinte la imagen
+const COLOR_FILTERS: Record<EstadoKey, string> = {
+  disponible: 'invert(38%) sepia(28%) saturate(600%) hue-rotate(60deg) brightness(90%)',   // verde #5C7A3E
+  ocupada:    'invert(45%) sepia(60%) saturate(700%) hue-rotate(340deg) brightness(95%)',  // naranja #D4673A
+  limpieza:   'invert(65%) sepia(50%) saturate(600%) hue-rotate(10deg) brightness(95%)',   // dorado #C9A84C
+  reservada:  'invert(35%) sepia(40%) saturate(600%) hue-rotate(190deg) brightness(90%)',  // azul #4A6FA5
+};
+
+function IlustracionMesa({ estado }: { estado: EstadoKey }) {
+  return (
+    <img
+      src={ICONOS[estado]}
+      alt=""
+      aria-hidden="true"
+      className="w-full h-full object-contain"
+      style={{ filter: COLOR_FILTERS[estado] }}
+    />
+  );
+}
+
+
+
 // ─── MesaCard ─────────────────────────────────────────────────────────────────
 function MesaCard({ mesa, onClick }: { mesa: Mesa; onClick: (m: Mesa) => void }) {
   const est = ESTADOS[mesa.estado];
   return (
     <button
       onClick={() => onClick(mesa)}
-      className="rounded-2xl p-4 text-left transition-all duration-200 flex flex-col gap-2"
-      style={{ background: est.bg, border: `1.5px solid ${est.color}30`, minHeight: 105 }}
+      className="rounded-2xl p-4 text-left transition-all duration-200 relative overflow-hidden flex flex-row items-stretch"
+      style={{ background: est.bg, border: `1.5px solid ${est.color}30`, minHeight: 130 }}
       onMouseEnter={(e) => {
         e.currentTarget.style.boxShadow = `0 4px 16px ${est.color}30`;
         e.currentTarget.style.borderColor = est.color;
@@ -70,46 +101,60 @@ function MesaCard({ mesa, onClick }: { mesa: Mesa; onClick: (m: Mesa) => void })
         e.currentTarget.style.borderColor = `${est.color}30`;
       }}
     >
-      <div className="flex items-start justify-between">
-        <div>
-          <p className="text-xs font-black tracking-widest uppercase" style={{ color: est.color }}>
+      {/* Columna izquierda: texto */}
+      <div className="flex flex-col gap-1.5 flex-1 min-w-0 z-10">
+        {/* Header: nombre + personas */}
+        <div className="flex flex-col gap-0.5">
+          <p className="text-sm font-black tracking-widest uppercase" style={{ color: est.color }}>
             Mesa {mesa.id}
           </p>
-          <div className="flex items-center gap-1 mt-0.5">
+          <div className="flex items-center gap-1">
             <Users className="w-3 h-3" style={{ color: B.muted }} />
             <span className="text-[10px]" style={{ color: B.muted }}>{mesa.cap} pers.</span>
           </div>
         </div>
-        <span
-          className="text-[9px] font-bold px-1.5 py-0.5 rounded-full"
-          style={{ background: `${est.color}20`, color: est.color }}
-        >
-          {est.label}
-        </span>
+
+        {/* Info cliente */}
+        {mesa.cliente && (
+          <div className="mt-auto">
+            <p className="text-xs font-semibold truncate" style={{ color: B.charcoal }}>{mesa.cliente}</p>
+            {mesa.pedido && <p className="text-xs font-bold" style={{ color: est.color }}>{mesa.pedido}</p>}
+            {mesa.hora && (
+              <div className="flex items-center gap-1">
+                <Clock className="w-3 h-3" style={{ color: B.muted }} />
+                <span className="text-[10px]" style={{ color: B.muted }}>{mesa.hora}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {!mesa.cliente && (
+          <p className="text-[10px] mt-auto" style={{ color: B.muted }}>
+            {mesa.estado === 'disponible'
+              ? 'Lista para atender'
+              : mesa.estado === 'limpieza' && mesa.hora
+                ? `Limpiando desde ${mesa.hora}`
+                : ''}
+          </p>
+        )}
       </div>
 
-      {mesa.cliente && (
-        <div className="mt-auto">
-          <p className="text-xs font-semibold truncate" style={{ color: B.charcoal }}>{mesa.cliente}</p>
-          {mesa.pedido && <p className="text-xs font-bold" style={{ color: est.color }}>{mesa.pedido}</p>}
-          {mesa.hora && (
-            <div className="flex items-center gap-1">
-              <Clock className="w-3 h-3" style={{ color: B.muted }} />
-              <span className="text-[10px]" style={{ color: B.muted }}>{mesa.hora}</span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Columna derecha: badge arriba + ilustración abajo */}
+      <div className="flex flex-col items-end justify-between shrink-0 pointer-events-none" style={{ width: 65 }}>
+        {/* Badge estado arriba a la derecha */}
+        <span
+          className="pointer-events-auto flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded-full"
+          style={{ background: `${est.color}18`, color: est.color, border: `1px solid ${est.color}30` }}
+        >
+          <est.icon className="w-2.5 h-2.5 shrink-0" />
+          {est.label}
+        </span>
 
-      {!mesa.cliente && (
-        <p className="text-[10px] mt-auto" style={{ color: B.muted }}>
-          {mesa.estado === 'disponible'
-            ? 'Lista para atender'
-            : mesa.estado === 'limpieza' && mesa.hora
-              ? `Limpiando desde ${mesa.hora}`
-              : ''}
-        </p>
-      )}
+        {/* Ilustración abajo */}
+        <div style={{ opacity: 0.55 }} aria-hidden="true">
+          <IlustracionMesa estado={mesa.estado} />
+        </div>
+      </div>
     </button>
   );
 }
@@ -140,9 +185,10 @@ function MesaModal({ mesa, onClose, onCambiarEstado }: MesaModalProps) {
             <p className="text-xs" style={{ color: B.muted }}>{mesa.zona} · {mesa.cap} personas</p>
           </div>
           <span
-            className="text-xs font-bold px-2.5 py-1 rounded-full"
+            className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
             style={{ background: est.bg, color: est.color }}
           >
+            <est.icon className="w-3.5 h-3.5 shrink-0" />
             {est.label}
           </span>
         </div>
@@ -174,7 +220,7 @@ function MesaModal({ mesa, onClose, onCambiarEstado }: MesaModalProps) {
                 border: `1px solid ${mesa.estado === key ? val.color : B.cream}`,
               }}
             >
-              <div className="w-2 h-2 rounded-full shrink-0" style={{ background: val.color }} />
+              <val.icon className="w-4 h-4 shrink-0" style={{ color: val.color }} />
               {val.label}
               {mesa.estado === key && (
                 <CheckCircle className="w-4 h-4 ml-auto" style={{ color: val.color }} />
@@ -232,7 +278,7 @@ export default function MesasView() {
             className="rounded-xl px-4 py-3 flex items-center gap-3"
             style={{ background: val.bg, border: `1px solid ${val.color}25` }}
           >
-            <div className="w-3 h-3 rounded-full shrink-0" style={{ background: val.color }} />
+            <val.icon className="w-5 h-5 shrink-0" style={{ color: val.color }} />
             <div>
               <p className="text-xs" style={{ color: val.color }}>{val.label}</p>
               <p className="text-2xl font-bold" style={{ color: B.charcoal }}>{counts[key]}</p>
