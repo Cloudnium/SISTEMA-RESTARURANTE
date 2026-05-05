@@ -1,8 +1,5 @@
-'use client';
-
 // lib/auth/AuthContext.tsx
-// Contexto de autenticación. Maneja login/logout con Supabase Auth
-// y expone el usuario actual con su rol.
+'use client';
 
 import React, {
   createContext, useContext, useEffect, useState, useCallback,

@@ -1,3 +1,4 @@
+// components/dashboard/DashboardView.tsx
 'use client';
 
 import React, { useMemo } from 'react';
