@@ -18,8 +18,11 @@ import { UsuariosView } from '@/components/usuarios/UsuariosView';
 import { CajasView } from '@/components/cajas/CajasView';
 import { ComprasView } from '@/components/compras/ComprasView';
 import { RespaldoView } from '@/components/respaldo/RespaldoView';
-
 import { MENU_SECTIONS } from '@/lib/brand';
+import { useAuth } from '@/lib/auth/AuthContext';
+import AuthGuard from '@/components/auth/AuthGuard';
+
+const SOLO_ADMIN = ['dashboard', 'reportes', 'usuarios', 'respaldo'];
 
 // ─── Resolve label for placeholder pages ──────────────────────────────────────
 function getLabelById(id: string): string {
@@ -42,14 +45,14 @@ function renderView(active: string): React.ReactNode {
     case 'almacen':     return <AlmacenView />;
 
     case 'clientes':    return <ClientesView />;
-    case 'usuarios':    return <UsuariosView />;
+    case 'usuarios':     return <AuthGuard requiredRole="admin"><UsuariosView /></AuthGuard>;
     case 'cajas':       return <CajasView />;
 
     case 'comprobantes': return <ComprobantesView />;
     case 'compras' :    return <ComprasView/>;
-    case 'reportes':    return <ReportesView />;
+    case 'reportes':     return <AuthGuard requiredRole="admin"><ReportesView /></AuthGuard>;
 
-    case 'respaldo':    return <RespaldoView />;
+    case 'respaldo':     return <AuthGuard requiredRole="admin"><RespaldoView /></AuthGuard>;
 
     default:            return <PlaceholderView label={getLabelById(active)} />;
   }
@@ -57,11 +60,26 @@ function renderView(active: string): React.ReactNode {
 
 // ─── Root page ────────────────────────────────────────────────────────────────
 export default function Page() {
-  const [active, setActive] = useState('dashboard');
+  const { usuario } = useAuth();
+  const [active, setActive] = useState(
+    () => usuario?.rol === 'cajero' ? 'ventas' : 'dashboard'
+  );
+
+  const handleViewChange = (view: string) => {
+    if (usuario?.rol === 'cajero' && SOLO_ADMIN.includes(view)) return;
+    setActive(view);
+  };
 
   return (
-    <AppShell active={active} setActive={setActive}>
-      {renderView(active)}
-    </AppShell>
+    <AuthGuard>
+      <AppShell
+        active={active}
+        setActive={handleViewChange}
+        userRole={usuario?.rol}
+        userName={usuario?.nombre ?? ''}
+      >
+        {renderView(active)}
+      </AppShell>
+    </AuthGuard>
   );
 }
