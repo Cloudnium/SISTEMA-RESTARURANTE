@@ -5,6 +5,7 @@ import { X, LogOut } from 'lucide-react';
 import { B, MENU_SECTIONS } from '@/lib/brand';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { useRouter } from 'next/navigation';
+import Image from 'next/image';
 
 interface SidebarProps {
   open:      boolean;
@@ -29,7 +30,13 @@ export default function Sidebar({ open, setOpen, active, setActive, userRole, us
   const router     = useRouter();
 
   const handleLogout = async () => {
-    try { await logout(); } finally { router.replace('/login'); }
+    try {
+      await logout();
+      router.replace('/login');
+    } catch (err) {
+      console.error('Error al cerrar sesión:', err);
+      router.replace('/login');
+    }
   };
 
   const secciones = MENU_SECTIONS.map(sec => ({
@@ -55,18 +62,20 @@ export default function Sidebar({ open, setOpen, active, setActive, userRole, us
         style={{ width: 260, background: B.charcoal }}
       >
         {/* Brand */}
-        <div className="px-6 py-5 border-b flex items-center justify-between shrink-0"
-          style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
-          <div>
-            <p className="text-[10px] tracking-[0.35em] uppercase font-semibold" style={{ color: B.gold }}>
-              Postres y Café
-            </p>
-            <p className="text-2xl font-black tracking-widest mt-0.5"
-              style={{ color: B.cream, fontFamily: 'Georgia, "Times New Roman", serif' }}>
-              MADRE
-            </p>
+        <div className="px-4 border-b flex items-center justify-between shrink-0"
+          style={{ borderColor: 'rgba(255,255,255,0.08)', height: 80 }}>
+          <div className="flex-1 flex items-center justify-center min-w-0">
+            <Image
+              src="/icons/icono.png"
+              alt="Madre Postres y Café"
+              width={320}
+              height={160}
+              style={{ objectFit: 'contain', width: '88%', height: '68px' }}
+              priority
+              draggable={false}
+            />
           </div>
-          <button className="lg:hidden p-1.5 rounded-lg" style={{ color: B.muted }}
+          <button className="lg:hidden p-1.5 rounded-lg shrink-0" style={{ color: B.muted }}
             onClick={() => setOpen(false)}
             onMouseEnter={e => e.currentTarget.style.background = 'rgba(255,255,255,0.08)'}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -126,7 +135,9 @@ export default function Sidebar({ open, setOpen, active, setActive, userRole, us
 
         {/* Footer con logout */}
         <div className="p-3 border-t shrink-0" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.15)' }}>
-          <button onClick={handleLogout}
+          <button
+            type="button"
+            onClick={handleLogout}
             className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all mb-2"
             style={{ color: 'rgba(245,237,216,0.5)' }}
             onMouseEnter={e => { e.currentTarget.style.background = 'rgba(211,72,54,0.15)'; e.currentTarget.style.color = '#f87171'; }}

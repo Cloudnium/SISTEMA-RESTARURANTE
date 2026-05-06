@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2 } from 'lucide-react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { B } from '@/lib/brand';
+import Image from 'next/image';
 
 export default function LoginPage() {
   const router                          = useRouter();
@@ -69,33 +70,18 @@ export default function LoginPage() {
         style={{ background: B.white, boxShadow: '0 32px 80px rgba(0,0,0,0.4)' }}
       >
         {/* Logo / Brand */}
-        <div className="text-center mb-8">
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-            style={{ background: B.charcoal }}
-          >
-            {/* Ícono de hoja de café estilizado */}
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <path d="M8 24 C8 24 10 12 20 8 C20 8 22 18 12 24 Z"
-                fill={B.green} />
-              <path d="M16 22 C16 22 24 14 28 8 C28 8 20 6 16 14 Z"
-                fill={B.gold} opacity="0.8" />
-              <circle cx="16" cy="20" r="2" fill={B.cream} />
-            </svg>
+        <div className="flex flex-col items-center mb-8">
+          <div className="rounded-2xl p-4 mb-2" style={{ background: B.charcoal }}>
+            <Image
+              src="/icons/icono.png"
+              alt="Madre Postres y Café"
+              width={200}
+              height={100}
+              style={{ objectFit: 'contain', width: 180, height: 'auto' }}
+              priority
+            />
           </div>
-          <p
-            className="text-[11px] tracking-[0.4em] uppercase font-semibold mb-1"
-            style={{ color: B.muted }}
-          >
-            Postres y Café
-          </p>
-          <h1
-            className="text-3xl font-black tracking-[0.15em] uppercase"
-            style={{ color: B.charcoal, fontFamily: 'Georgia, serif' }}
-          >
-            MADRE
-          </h1>
-          <p className="text-sm mt-2" style={{ color: B.muted }}>
+          <p className="text-sm mt-3" style={{ color: B.muted }}>
             Sistema de gestión · Inicia sesión
           </p>
         </div>

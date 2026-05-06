@@ -8,6 +8,7 @@ import { useAuth } from '@/lib/auth/AuthContext';
 import { B } from '@/lib/brand';
 import { supabase as _supabase } from '@/lib/supabase/client';
 import type { RolUsuario } from '@/lib/supabase/types';
+import Image from 'next/image';
 
 // Cliente con tipado relajado para escrituras — mismo patrón que queries/index.ts
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -352,29 +353,17 @@ export default function RegisterPage() {
         style={{ background: B.white, boxShadow: '0 32px 80px rgba(0,0,0,0.4)' }}
       >
         {/* Header */}
-        <div className="text-center mb-7">
-          <div
-            className="w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-4"
-            style={{ background: B.charcoal }}
-          >
-            <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
-              <path d="M8 24 C8 24 10 12 20 8 C20 8 22 18 12 24 Z" fill={B.green} />
-              <path d="M16 22 C16 22 24 14 28 8 C28 8 20 6 16 14 Z" fill={B.gold} opacity="0.8" />
-              <circle cx="16" cy="20" r="2" fill={B.cream} />
-            </svg>
+        <div className="flex flex-col items-center mb-5">
+          <div className="rounded-2xl p-4 mb-2" style={{ background: B.charcoal }}>
+            <Image
+              src="/icons/icono.png"
+              alt="Madre Postres y Café"
+              width={320}
+              height={160}
+              style={{ objectFit: 'contain', width: 180, height: 'auto' }}
+              priority
+            />
           </div>
-          <p
-            className="text-[11px] tracking-[0.4em] uppercase font-semibold mb-1"
-            style={{ color: B.muted }}
-          >
-            Postres y Café
-          </p>
-          <h1
-            className="text-3xl font-black tracking-[0.15em] uppercase"
-            style={{ color: B.charcoal, fontFamily: 'Georgia, serif' }}
-          >
-            MADRE
-          </h1>
           <p className="text-sm mt-2" style={{ color: B.muted }}>
             Registrar nuevo usuario · Solo administradores
           </p>
