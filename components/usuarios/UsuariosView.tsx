@@ -2,17 +2,15 @@
 
 import React, { useMemo, useState } from 'react';
 import {
-  Plus, Edit, X, CreditCard,
-  Search,
-  Trash2,
-  UserCircle,
-  Shield,
-  ChefHat,
+  Plus, Edit, X, CreditCard, Search, Trash2,
+  UserCircle, Shield, ChefHat, Loader2,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, KpiCard, Btn, Card } from '@/components/ui';
+import { useGlobalData } from '@/context/GlobalDataContext';
+import { crearUsuario, actualizarUsuario, desactivarUsuario } from '@/lib/supabase/queries';
+import type { Usuario, RolUsuario } from '@/lib/supabase/types';
 
-// ─── Shared helpers ───────────────────────────────────────────────────────────
 function inputCls(extra = '') {
   return `w-full px-3 py-2.5 rounded-xl text-sm outline-none ${extra}`;
 }
@@ -43,60 +41,127 @@ function ModalBase({ title, onClose, children, actions }: {
   );
 }
 
-type Rol = 'admin' | 'cajero' | 'cocinero';
- 
-interface Usuario {
-  id: string; nombre: string; email: string; rol: Rol;
-  dni: string; caja: string; estado: 'activo' | 'inactivo';
-}
- 
-const USUARIOS_DEMO: Usuario[] = [
-  { id:'1', nombre:'Admin',     email:'admin@gmail.com',                    rol:'admin',   dni:'-',         caja:'-',      estado:'activo' },
-  { id:'2', nombre:'Alex',      email:'alexrojitas22@hotmail.com',          rol:'admin',   dni:'-',         caja:'Caja 1', estado:'activo' },
-  { id:'3', nombre:'Andree',    email:'andree@gmail.com',                   rol:'admin',   dni:'-',         caja:'-',      estado:'activo' },
-  { id:'4', nombre:'Caro',      email:'caro15.amore@gmail.com',             rol:'admin',   dni:'76909507',  caja:'Caja 3', estado:'activo' },
-  { id:'5', nombre:'Katherine', email:'katherinemanchaycunya@gmail.com',    rol:'cajero',  dni:'00000000',  caja:'Caja 4', estado:'activo' },
-  { id:'6', nombre:'Sandy',     email:'sandychiroque96@gmail.com',          rol:'cocinero',dni:'-',         caja:'Caja 2', estado:'activo' },
-];
- 
-const ROL_CONFIG: Record<Rol, { label: string; bg: string; color: string }> = {
-  admin:    { label:'Administrador', bg:`${B.gold}18`,  color: B.gold },
-  cajero:   { label:'Cajero',        bg:`${B.green}18`, color: B.green },
-  cocinero: { label:'Cocinero',      bg:`${B.terra}18`, color: B.terra },
+const ROL_CONFIG: Record<RolUsuario, { label: string; bg: string; color: string }> = {
+  admin:    { label: 'Administrador', bg: `${B.gold}18`,  color: B.gold },
+  cajero:   { label: 'Cajero',        bg: `${B.green}18`, color: B.green },
+  cocinero: { label: 'Cocinero',      bg: `${B.terra}18`, color: B.terra },
 };
- 
+
+interface FormState {
+  nombre: string; email: string; rol: RolUsuario; dni: string;
+}
+const FORM_VACIO: FormState = { nombre: '', email: '', rol: 'cajero', dni: '' };
+
+function ModalUsuario({ usuario, onClose, onSaved }: {
+  usuario: Usuario | null; onClose: () => void; onSaved: () => void;
+}) {
+  const [form,     setForm]     = useState<FormState>(usuario
+    ? { nombre: usuario.nombre, email: usuario.email, rol: usuario.rol, dni: usuario.dni ?? '' }
+    : FORM_VACIO);
+  const [guardando, setGuardando] = useState(false);
+  const [error,     setError]     = useState('');
+
+  const handleGuardar = async () => {
+    if (!form.nombre.trim() || !form.email.trim()) { setError('Nombre y email son obligatorios'); return; }
+    setGuardando(true); setError('');
+    try {
+      const payload = {
+        nombre: form.nombre, email: form.email,
+        rol: form.rol, dni: form.dni || null,
+      };
+      if (usuario) await actualizarUsuario(usuario.id, payload);
+      else await crearUsuario(payload);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al guardar');
+    } finally {
+      setGuardando(false);
+    }
+  };
+
+  return (
+    <ModalBase title={usuario ? 'Editar Usuario' : 'Nuevo Usuario'} onClose={onClose}
+      actions={<>
+        <button className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+          style={{ background: B.cream, color: B.charcoal }} onClick={onClose}>Cancelar</button>
+        <button onClick={handleGuardar} disabled={guardando}
+          className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+          style={{ background: B.green, color: B.cream }}>
+          {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
+          {usuario ? 'Guardar' : 'Crear'}
+        </button>
+      </>}>
+      <div className="space-y-3">
+        {([
+          { key: 'nombre', label: 'Nombre',    ph: 'Chef Ana', type: 'text' },
+          { key: 'email',  label: 'Email',     ph: 'chef@madre.com', type: 'email' },
+          { key: 'dni',    label: 'DNI',       ph: '12345678', type: 'text' },
+        ] as { key: keyof FormState; label: string; ph: string; type: string }[]).map(({ key, label, ph, type }) => (
+          <div key={key}>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>{label}</label>
+            <input type={type} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
+              placeholder={ph} className={inputCls()} style={INP} />
+          </div>
+        ))}
+        <div>
+          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Rol</label>
+          <select value={form.rol} onChange={e => setForm(f => ({ ...f, rol: e.target.value as RolUsuario }))}
+            className={inputCls()} style={INP}>
+            <option value="admin">Administrador</option>
+            <option value="cajero">Cajero</option>
+            <option value="cocinero">Cocinero</option>
+          </select>
+        </div>
+        {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+      </div>
+    </ModalBase>
+  );
+}
+
 export function UsuariosView() {
-  const [busqueda, setBusqueda]   = useState('');
-  const [rolFiltro, setRolFiltro] = useState<'todos' | Rol>('todos');
-  const [modal, setModal]         = useState<{ open: boolean; usuario: Usuario | null }>({ open: false, usuario: null });
- 
+  const { usuarios, isLoading, refetchUsuarios } = useGlobalData();
+  const [busqueda,  setBusqueda]  = useState('');
+  const [rolFiltro, setRolFiltro] = useState<'todos' | RolUsuario>('todos');
+  const [modal,     setModal]     = useState<{ open: boolean; usuario: Usuario | null }>({ open: false, usuario: null });
+
   const filtrados = useMemo(() => {
     const q = busqueda.toLowerCase();
-    return USUARIOS_DEMO.filter(u => {
+    return usuarios.filter(u => {
       const matchQ   = !q || u.nombre.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
       const matchRol = rolFiltro === 'todos' || u.rol === rolFiltro;
       return matchQ && matchRol;
     });
-  }, [busqueda, rolFiltro]);
- 
+  }, [usuarios, busqueda, rolFiltro]);
+
+  const handleDesactivar = async (id: string) => {
+    if (!confirm('¿Desactivar este usuario?')) return;
+    await desactivarUsuario(id);
+    refetchUsuarios();
+  };
+
+  if (isLoading) return (
+    <div className="flex items-center justify-center min-h-[60vh]">
+      <Loader2 className="w-10 h-10 animate-spin" style={{ color: B.green }} />
+    </div>
+  );
+
   return (
     <div>
       <PageHeader
         title="Gestión de Usuarios"
-        subtitle={`Administra cajeros, cocineros y administradores · Total: ${USUARIOS_DEMO.length}`}
+        subtitle={`Administra cajeros, cocineros y administradores · Total: ${usuarios.length}`}
         action={<Btn onClick={() => setModal({ open: true, usuario: null })}><Plus className="w-4 h-4" />Nuevo Usuario</Btn>}
       />
- 
+
       <div className="grid grid-cols-3 gap-4 mb-5">
-        {(['admin','cajero','cocinero'] as Rol[]).map(r => (
+        {(['admin', 'cajero', 'cocinero'] as RolUsuario[]).map(r => (
           <KpiCard key={r} label={ROL_CONFIG[r].label}
-            value={USUARIOS_DEMO.filter(u => u.rol === r).length}
+            value={usuarios.filter(u => u.rol === r).length}
             icon={r === 'admin' ? Shield : r === 'cajero' ? CreditCard : ChefHat}
             color={ROL_CONFIG[r].color} />
         ))}
       </div>
- 
-      {/* Filtros */}
+
       <Card className="mb-4">
         <div className="flex flex-col sm:flex-row gap-3">
           <div className="flex-1 relative">
@@ -114,13 +179,12 @@ export function UsuariosView() {
           </select>
         </div>
       </Card>
- 
-      {/* Tabla */}
+
       <div className="rounded-2xl overflow-hidden" style={{ background: B.white, border: `1px solid ${B.cream}` }}>
         <table className="w-full">
           <thead>
             <tr style={{ background: B.cream }}>
-              {['Nombre','Email','Rol','DNI','Caja','Estado','Acciones'].map(h => (
+              {['Nombre', 'Email', 'Rol', 'DNI', 'Caja', 'Estado', 'Acciones'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-black uppercase tracking-widest" style={{ color: B.muted }}>{h}</th>
               ))}
             </tr>
@@ -148,15 +212,16 @@ export function UsuariosView() {
                       {rolCfg.label}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm font-mono" style={{ color: B.charcoal }}>{u.dni}</td>
-                  <td className="px-4 py-3 text-sm" style={{ color: B.charcoal }}>{u.caja}</td>
+                  <td className="px-4 py-3 text-sm font-mono" style={{ color: B.charcoal }}>{u.dni ?? '-'}</td>
+                  <td className="px-4 py-3 text-sm" style={{ color: B.charcoal }}>
+                    {(u.caja as { nombre?: string } | null)?.nombre ?? '-'}
+                  </td>
                   <td className="px-4 py-3">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={u.estado === 'activo'
+                      style={u.activo
                         ? { background: '#e8f5e2', color: B.green }
-                        : { background: '#fee2e2', color: B.terra }
-                      }>
-                      {u.estado}
+                        : { background: '#fee2e2', color: B.terra }}>
+                      {u.activo ? 'Activo' : 'Inactivo'}
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -167,7 +232,8 @@ export function UsuariosView() {
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button className="p-1.5 rounded-lg" style={{ color: B.terra }}
+                      <button onClick={() => handleDesactivar(u.id)}
+                        className="p-1.5 rounded-lg" style={{ color: B.terra }}
                         onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
                         <Trash2 className="w-4 h-4" />
@@ -179,31 +245,14 @@ export function UsuariosView() {
             })}
           </tbody>
         </table>
+        {filtrados.length === 0 && (
+          <div className="py-10 text-center text-sm" style={{ color: B.muted }}>No se encontraron usuarios</div>
+        )}
       </div>
- 
+
       {modal.open && (
-        <ModalBase title={modal.usuario ? 'Editar Usuario' : 'Nuevo Usuario'} onClose={() => setModal({ open: false, usuario: null })}
-          actions={<>
-            <button className="flex-1 py-2.5 rounded-xl text-sm font-semibold" style={{ background: B.cream, color: B.charcoal }} onClick={() => setModal({ open: false, usuario: null })}>Cancelar</button>
-            <button className="flex-1 py-2.5 rounded-xl text-sm font-bold" style={{ background: B.green, color: B.cream }}>{modal.usuario ? 'Guardar' : 'Crear'}</button>
-          </>}>
-          <div className="space-y-3">
-            {[['Nombre','Ej: Chef Ana'],['Email','chef@madre.com'],['DNI','12345678'],['Contraseña','••••••••']].map(([label, ph]) => (
-              <div key={label}>
-                <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>{label}</label>
-                <input type={label === 'Contraseña' ? 'password' : 'text'} defaultValue={label === 'Nombre' ? modal.usuario?.nombre : ''} placeholder={ph} className={inputCls()} style={INP} />
-              </div>
-            ))}
-            <div>
-              <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Rol</label>
-              <select className={inputCls()} style={INP} defaultValue={modal.usuario?.rol ?? 'cajero'}>
-                <option value="admin">Administrador</option>
-                <option value="cajero">Cajero</option>
-                <option value="cocinero">Cocinero</option>
-              </select>
-            </div>
-          </div>
-        </ModalBase>
+        <ModalUsuario usuario={modal.usuario} onClose={() => setModal({ open: false, usuario: null })}
+          onSaved={() => { setModal({ open: false, usuario: null }); refetchUsuarios(); }} />
       )}
     </div>
   );

@@ -1,8 +1,5 @@
-'use client';
-
 // context/GlobalDataContext.tsx
-// Contexto global que carga todos los datos de Supabase una sola vez
-// y los expone a toda la app sin prop drilling.
+'use client';
 
 import React, {
   createContext, useContext, useEffect, useState,
@@ -97,7 +94,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const refetchMesas = useCallback(async () => {
-    try { setMesas(await getMesas()); }
+    try { setMesas(await getMesas()); } // IA dice cambiar a getMesasConPedido
     catch (e) { console.error('mesas:', e); }
   }, []);
 

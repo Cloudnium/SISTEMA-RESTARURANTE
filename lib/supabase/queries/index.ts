@@ -10,6 +10,7 @@ import type {
   Compra, ProduccionCocina,
   Usuario, Pedido, PedidoItem, Notificacion,
   CrearVentaPayload, EstadoMesa, ZonaAlmacen,
+  RolUsuario,
 } from '../types';
 
 // Cliente con tipado relajado para escrituras (INSERT/UPDATE) y RPCs
@@ -542,6 +543,11 @@ export async function crearCompra(
   return data as Compra;
 }
 
+export async function eliminarCompra(id: string) {
+  const { error } = await db.from('compras').delete().eq('id', id);
+  if (error) throw error;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // PRODUCCIÓN COCINA
 // ════════════════════════════════════════════════════════════════════════════
@@ -594,6 +600,38 @@ export async function getUsuarios(): Promise<Usuario[]> {
     .order('nombre');
   if (error) throw error;
   return (data as Usuario[]) ?? [];
+}
+
+export async function crearUsuario(payload: {
+  nombre: string; email: string; rol: RolUsuario;
+  dni?: string | null; caja_id?: string | null;
+}) {
+  const { data, error } = await db
+    .from('usuarios')
+    .insert({ ...payload, activo: true })
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Usuario;
+}
+
+export async function actualizarUsuario(id: string, cambios: Partial<Omit<Usuario, 'id'>>) {
+  const { data, error } = await db
+    .from('usuarios')
+    .update(cambios)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Usuario;
+}
+
+export async function desactivarUsuario(id: string) {
+  const { error } = await db
+    .from('usuarios')
+    .update({ activo: false })
+    .eq('id', id);
+  if (error) throw error;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
