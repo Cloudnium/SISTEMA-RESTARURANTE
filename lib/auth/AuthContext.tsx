@@ -29,9 +29,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const cargarPerfil = useCallback(async (userId: string) => {
     const { data } = await supabase
       .from('usuarios')
-      .select('*, caja:cajas(nombre, estado)')
+      .select('*, caja:cajas!fk_usuarios_caja(nombre, estado)')
       .eq('id', userId)
       .single();
+    
     setUsuario(data as Usuario | null);
   }, []);
 
