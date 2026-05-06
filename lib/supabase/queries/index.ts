@@ -152,6 +152,18 @@ export async function actualizarEstadoMesa(id: string, estado: EstadoMesa) {
   if (error) throw error;
 }
 
+export async function crearMesa(payload: {
+  numero: string; nombre: string; zona: string; capacidad: number; estado?: EstadoMesa;
+}) {
+  const { data, error } = await db
+    .from('mesas')
+    .insert({ ...payload, estado: payload.estado ?? 'disponible', activo: true })
+    .select()
+    .single();
+  if (error) throw error;
+  return data;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // PEDIDOS
 // ════════════════════════════════════════════════════════════════════════════

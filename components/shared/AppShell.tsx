@@ -1,3 +1,4 @@
+// components/shared/AppShell.tsx
 'use client';
 
 import React, { useState } from 'react';
@@ -28,7 +29,7 @@ export default function AppShell({ active, setActive, children, userRole, userNa
       />
       <div className="hidden lg:block shrink-0" style={{ width: 260 }} />
       <div className="flex flex-col flex-1 min-w-0">
-        <Navbar onOpenSidebar={() => setSidebarOpen(true)} userName={userName} userRole={userRole} />
+        <Navbar onOpenSidebar={() => setSidebarOpen(true)} userName={userName} />
         <main className="flex-1 p-6">{children}</main>
       </div>
     </div>
