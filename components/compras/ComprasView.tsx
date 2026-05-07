@@ -9,6 +9,7 @@ import {
 import { B } from '@/lib/brand';
 import { PageHeader, Card, KpiCard, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
+import { useAuth } from '@/lib/auth/AuthContext';
 import { crearCompra, eliminarCompra } from '@/lib/supabase/queries';
 import type { Compra, TipoComprobanteCompra, ZonaAlmacen } from '@/lib/supabase/types';
 
@@ -22,6 +23,39 @@ const INP: React.CSSProperties = {
   color: B.charcoal,
 };
 
+const TIPOS_COMP: TipoComprobanteCompra[] = ['factura', 'boleta', 'nota_venta', 'recibo', 'otro'];
+
+// ─── Tipos del formulario ─────────────────────────────────────────────────────
+interface CompraItem {
+  descripcion: string;
+  cantidad: string;
+  precio_unitario: string;
+  zona_destino: ZonaAlmacen;
+}
+
+interface FormState {
+  tipo_comprobante: TipoComprobanteCompra;
+  serie:            string;
+  numero:           string;
+  fecha_emision:    string;
+  proveedor_nombre: string;
+  proveedor_doc:    string;
+  descripcion:      string;
+  igv_incluido:     boolean;
+  items:            CompraItem[];
+}
+
+const HOY = new Date().toISOString().split('T')[0];
+
+const FORM_VACIO: FormState = {
+  tipo_comprobante: 'factura',
+  serie: '', numero: '', fecha_emision: HOY,
+  proveedor_nombre: '', proveedor_doc: '',
+  descripcion: '', igv_incluido: true,
+  items: [{ descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'cocina' }],
+};
+
+// ─── Modal base ───────────────────────────────────────────────────────────────
 function ModalBase({ title, onClose, children, actions }: {
   title: string; onClose: () => void;
   children: React.ReactNode; actions?: React.ReactNode;
@@ -30,7 +64,7 @@ function ModalBase({ title, onClose, children, actions }: {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
       onClick={onClose}>
-      <div className="rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
+      <div className="rounded-2xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col"
         style={{ background: B.white }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b shrink-0"
           style={{ borderColor: B.cream }}>
@@ -48,195 +82,217 @@ function ModalBase({ title, onClose, children, actions }: {
   );
 }
 
-// ─── Formulario de nueva compra ───────────────────────────────────────────────
-interface FormCompra {
-  proveedor_nombre: string;
-  proveedor_doc: string;
-  serie: string;
-  numero: string;
-  tipo_comprobante: TipoComprobanteCompra;
-  base_imponible: string;
-  igv: string;
-  total: string;
-  fecha_emision: string;
-}
-
-const FORM_VACIO: FormCompra = {
-  proveedor_nombre: '',
-  proveedor_doc: '',
-  serie: '',
-  numero: '',
-  tipo_comprobante: 'factura',
-  base_imponible: '',
-  igv: '',
-  total: '',
-  fecha_emision: new Date().toISOString().split('T')[0],
-};
-
-function ModalNuevaCompra({ onClose, onSaved, usuarioId }: {
+// ─── Modal Nueva Compra (formulario con items del segundo archivo) ─────────────
+function ModalNuevaCompra({ onClose, onSaved, compraEditar }: {
   onClose: () => void;
   onSaved: () => void;
-  usuarioId: string;
+  compraEditar?: Compra | null;
 }) {
-  const [form, setForm] = useState<FormCompra>(FORM_VACIO);
-  const [guardando, setGuardando] = useState(false);
-  const [error, setError] = useState('');
+  const { usuario } = useAuth();
+  const [form,    setForm]    = useState<FormState>(FORM_VACIO);
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
 
-  // Auto-calcula IGV y base cuando cambia el total
-  const handleTotalChange = (valor: string) => {
-    const total = parseFloat(valor) || 0;
-    const base  = parseFloat((total / 1.18).toFixed(2));
-    const igv   = parseFloat((total - base).toFixed(2));
-    setForm(f => ({ ...f, total: valor, base_imponible: String(base), igv: String(igv) }));
-  };
+  const totalItems = form.items.reduce((a, i) => {
+    const sub = parseFloat(i.cantidad || '0') * parseFloat(i.precio_unitario || '0');
+    return a + sub;
+  }, 0);
+  const igv     = form.igv_incluido ? totalItems * 0.18 / 1.18 : totalItems * 0.18;
+  const baseImp = form.igv_incluido ? totalItems - igv : totalItems;
+  const total   = form.igv_incluido ? totalItems : totalItems + igv;
+
+  const addItem = () => setForm(f => ({
+    ...f, items: [...f.items, { descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'cocina' }],
+  }));
+
+  const removeItem = (idx: number) => setForm(f => ({
+    ...f, items: f.items.filter((_, i) => i !== idx),
+  }));
+
+  const updateItem = (idx: number, key: keyof CompraItem, value: string) =>
+    setForm(f => ({
+      ...f,
+      items: f.items.map((item, i) => i === idx ? { ...item, [key]: value } : item),
+    }));
 
   const handleGuardar = async () => {
     if (!form.proveedor_nombre.trim()) { setError('El proveedor es obligatorio'); return; }
-    if (!form.total || parseFloat(form.total) <= 0) { setError('El total debe ser mayor a 0'); return; }
-    setGuardando(true); setError('');
+    if (!form.numero.trim()) { setError('El número de comprobante es obligatorio'); return; }
+    if (!usuario) return;
+
+    setLoading(true); setError('');
     try {
       await crearCompra(
         {
           tipo_comprobante:   form.tipo_comprobante,
-          serie:              form.serie   || null,
-          numero:             form.numero  || null,
+          serie:              form.serie || null,
+          numero:             form.numero,
           fecha_emision:      form.fecha_emision,
           fecha_vencimiento:  null,
           proveedor_nombre:   form.proveedor_nombre,
           proveedor_doc:      form.proveedor_doc || null,
           proveedor_tipo_doc: form.proveedor_doc?.length === 11 ? 'ruc' : 'dni',
-          base_imponible:     parseFloat(form.base_imponible) || 0,
-          igv:                parseFloat(form.igv) || 0,
-          total:              parseFloat(form.total) || 0,
-          descripcion:        null,
-          usuario_id:         usuarioId,
+          base_imponible:     baseImp,
+          igv:                igv,
+          total:              total,
+          descripcion:        form.descripcion || null,
+          usuario_id:         usuario.id,
         },
-        [] // items: se puede extender después
+        form.items
+          .filter(i => i.descripcion.trim())
+          .map(i => ({
+            descripcion:     i.descripcion,
+            cantidad:        parseInt(i.cantidad) || 1,
+            precio_unitario: parseFloat(i.precio_unitario) || 0,
+            zona_destino:    i.zona_destino,
+          }))
       );
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al registrar');
     } finally {
-      setGuardando(false);
+      setLoading(false);
     }
   };
 
   return (
-    <ModalBase title="Nueva Compra" onClose={onClose}
+    <ModalBase
+      title={compraEditar ? 'Editar Compra' : 'Nueva Compra'}
+      onClose={onClose}
       actions={<>
         <button className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
           style={{ background: B.cream, color: B.charcoal }} onClick={onClose}>
           Cancelar
         </button>
-        <button onClick={handleGuardar} disabled={guardando}
+        <button onClick={handleGuardar} disabled={loading}
           className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
           style={{ background: B.green, color: B.cream }}>
-          {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
-          Registrar
+          {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+          Registrar compra
         </button>
       </>}>
-      <div className="space-y-3">
+      <div className="space-y-4">
 
-        {/* Proveedor */}
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-            Proveedor *
-          </label>
-          <input type="text" placeholder="SODALES DISTRIBUIDORES S.A.C."
-            value={form.proveedor_nombre}
-            onChange={e => setForm(f => ({ ...f, proveedor_nombre: e.target.value }))}
-            className={inputCls()} style={INP} />
-        </div>
-
-        {/* RUC / DNI */}
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-            RUC / DNI
-          </label>
-          <input type="text" placeholder="20525474071"
-            value={form.proveedor_doc}
-            onChange={e => setForm(f => ({ ...f, proveedor_doc: e.target.value }))}
-            className={inputCls()} style={INP} />
-        </div>
-
-        {/* Tipo comprobante */}
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-            Tipo comprobante
-          </label>
-          <select value={form.tipo_comprobante}
-            onChange={e => setForm(f => ({ ...f, tipo_comprobante: e.target.value as TipoComprobanteCompra }))}
-            className={inputCls()} style={INP}>
-            <option value="factura">Factura</option>
-            <option value="boleta">Boleta</option>
-            <option value="recibo">Recibo</option>
-            <option value="nota_venta">Nota de Venta</option>
-            <option value="otro">Otro</option>
-          </select>
+        {/* Tipo y Fecha */}
+        <div className="grid grid-cols-2 gap-3">
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Tipo</label>
+            <select value={form.tipo_comprobante}
+              onChange={e => setForm(f => ({ ...f, tipo_comprobante: e.target.value as TipoComprobanteCompra }))}
+              className={inputCls()} style={INP}>
+              {TIPOS_COMP.map(t => (
+                <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Fecha</label>
+            <input type="date" value={form.fecha_emision}
+              onChange={e => setForm(f => ({ ...f, fecha_emision: e.target.value }))}
+              className={inputCls()} style={INP} />
+          </div>
         </div>
 
         {/* Serie y Número */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-              Serie
-            </label>
-            <input type="text" placeholder="F002"
-              value={form.serie}
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Serie</label>
+            <input type="text" value={form.serie}
               onChange={e => setForm(f => ({ ...f, serie: e.target.value }))}
-              className={inputCls()} style={INP} />
+              placeholder="F001" className={inputCls()} style={INP} />
           </div>
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-              Número
-            </label>
-            <input type="text" placeholder="486259"
-              value={form.numero}
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Número *</label>
+            <input type="text" value={form.numero}
               onChange={e => setForm(f => ({ ...f, numero: e.target.value }))}
-              className={inputCls()} style={INP} />
+              placeholder="12345" className={inputCls()} style={INP} />
           </div>
         </div>
 
-        {/* Fecha */}
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-            Fecha de emisión
-          </label>
-          <input type="date" value={form.fecha_emision}
-            onChange={e => setForm(f => ({ ...f, fecha_emision: e.target.value }))}
-            className={inputCls()} style={INP} />
-        </div>
-
-        {/* Total → auto-calcula base e IGV */}
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-            Total (S/) *
-          </label>
-          <input type="number" step="0.01" placeholder="36.24"
-            value={form.total}
-            onChange={e => handleTotalChange(e.target.value)}
-            className={inputCls()} style={INP} />
-        </div>
-
-        {/* Base imponible e IGV (calculados, editables si se necesita) */}
+        {/* Proveedor */}
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-              Base imponible
-            </label>
-            <input type="number" step="0.01" placeholder="30.71"
-              value={form.base_imponible}
-              onChange={e => setForm(f => ({ ...f, base_imponible: e.target.value }))}
-              className={inputCls()} style={INP} />
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Proveedor *</label>
+            <input type="text" value={form.proveedor_nombre}
+              onChange={e => setForm(f => ({ ...f, proveedor_nombre: e.target.value }))}
+              placeholder="SODALES DISTRIBUIDORES S.A.C." className={inputCls()} style={INP} />
           </div>
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-              IGV (18%)
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>RUC / DNI</label>
+            <input type="text" value={form.proveedor_doc}
+              onChange={e => setForm(f => ({ ...f, proveedor_doc: e.target.value }))}
+              placeholder="20525474071" className={inputCls()} style={INP} />
+          </div>
+        </div>
+
+        {/* Items */}
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <label className="text-xs font-black uppercase tracking-wide" style={{ color: B.muted }}>
+              Items / Productos
             </label>
-            <input type="number" step="0.01" placeholder="5.53"
-              value={form.igv}
-              onChange={e => setForm(f => ({ ...f, igv: e.target.value }))}
-              className={inputCls()} style={INP} />
+            <button onClick={addItem}
+              className="text-xs font-bold px-2 py-1 rounded-lg flex items-center gap-1"
+              style={{ background: `${B.green}18`, color: B.green }}>
+              <Plus className="w-3 h-3" /> Agregar
+            </button>
+          </div>
+          <div className="space-y-2">
+            {form.items.map((item, idx) => (
+              <div key={idx} className="grid grid-cols-12 gap-2 items-center">
+                <input type="text" value={item.descripcion}
+                  onChange={e => updateItem(idx, 'descripcion', e.target.value)}
+                  placeholder="Descripción del producto"
+                  className="col-span-4 px-3 py-2 rounded-xl text-xs outline-none" style={INP} />
+                <input type="number" value={item.cantidad}
+                  onChange={e => updateItem(idx, 'cantidad', e.target.value)}
+                  placeholder="Cant."
+                  className="col-span-1 px-2 py-2 rounded-xl text-xs outline-none text-center" style={INP} />
+                <input type="number" value={item.precio_unitario}
+                  onChange={e => updateItem(idx, 'precio_unitario', e.target.value)}
+                  placeholder="Precio"
+                  className="col-span-2 px-2 py-2 rounded-xl text-xs outline-none" style={INP} />
+                <select value={item.zona_destino}
+                  onChange={e => updateItem(idx, 'zona_destino', e.target.value)}
+                  className="col-span-3 px-2 py-2 rounded-xl text-xs outline-none" style={INP}>
+                  <option value="cocina">Cocina</option>
+                  <option value="tienda">Tienda</option>
+                  <option value="general">General</option>
+                </select>
+                <div className="col-span-1 text-xs text-right font-bold" style={{ color: B.charcoal }}>
+                  S/{(parseFloat(item.cantidad || '0') * parseFloat(item.precio_unitario || '0')).toFixed(0)}
+                </div>
+                <button onClick={() => removeItem(idx)} disabled={form.items.length === 1}
+                  className="col-span-1 p-1.5 rounded-lg disabled:opacity-30"
+                  style={{ color: B.terra }}>
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Totales */}
+        <div className="rounded-xl p-4" style={{ background: B.cream }}>
+          <div className="flex items-center gap-2 mb-2">
+            <input type="checkbox" id="igv_incluido" checked={form.igv_incluido}
+              onChange={e => setForm(f => ({ ...f, igv_incluido: e.target.checked }))} />
+            <label htmlFor="igv_incluido" className="text-xs font-semibold" style={{ color: B.charcoal }}>
+              IGV incluido en precios
+            </label>
+          </div>
+          <div className="space-y-1 text-sm">
+            <div className="flex justify-between" style={{ color: B.muted }}>
+              <span>Base imponible</span><span>S/ {baseImp.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between" style={{ color: B.muted }}>
+              <span>IGV (18%)</span><span>S/ {igv.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between font-black text-base border-t pt-1"
+              style={{ borderColor: B.creamDark, color: B.charcoal }}>
+              <span>Total</span>
+              <span style={{ color: B.terra }}>S/ {total.toFixed(2)}</span>
+            </div>
           </div>
         </div>
 
@@ -324,10 +380,9 @@ export function ComprasView() {
             onChange={e => setTipoFiltro(e.target.value as typeof tipoFiltro)}
             className="px-4 py-2.5 rounded-xl text-sm outline-none" style={INP}>
             <option value="todos">Todos</option>
-            <option value="factura">Factura</option>
-            <option value="boleta">Boleta</option>
-            <option value="recibo">Recibo</option>
-            <option value="nota_venta">Nota de Venta</option>
+            {TIPOS_COMP.map(t => (
+              <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+            ))}
           </select>
         </div>
       </Card>
@@ -392,16 +447,15 @@ export function ComprasView() {
         </table>
         {filtrados.length === 0 && (
           <div className="py-10 text-center text-sm" style={{ color: B.muted }}>
-            No se encontraron compras
+            {compras.length === 0 ? 'Sin compras registradas' : 'No se encontraron compras'}
           </div>
         )}
       </div>
 
-      {modal && usuarioActual && (
+      {modal && (
         <ModalNuevaCompra
           onClose={() => setModal(false)}
           onSaved={() => { setModal(false); refetchCompras(); }}
-          usuarioId={usuarioActual.id}
         />
       )}
     </div>

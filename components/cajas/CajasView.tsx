@@ -1,178 +1,501 @@
-// components/cajas/CajasView.tsx
 'use client';
 
 import React, { useState } from 'react';
 import {
-  Plus, Edit, X, TrendingDown, DollarSign, CheckCircle,
-  CreditCard, Lock, Eye, Power, Loader2,
+  Plus, DollarSign, Eye, Lock, TrendingDown,
+  Edit, Trash2, Loader2, X, CheckCircle, CreditCard,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, KpiCard, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { crearCaja, abrirCaja, cerrarCaja, registrarEgresoCaja } from '@/lib/supabase/queries';
-import type { Caja } from '@/lib/supabase/types';
+import { abrirCaja, cerrarCaja, crearCaja, getMovimientosCaja } from '@/lib/supabase/queries';
+import { supabase } from '@/lib/supabase/client';
+import type { Caja, MovimientoCaja } from '@/lib/supabase/types';
 
-function inputCls(extra = '') {
-  return `w-full px-3 py-2.5 rounded-xl text-sm outline-none ${extra}`;
-}
-const INP: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
-
-function ModalBase({ title, onClose, children, actions }: {
-  title: string; onClose: () => void;
-  children: React.ReactNode; actions?: React.ReactNode;
+// ─── Modal Apertura ───────────────────────────────────────────────────────────
+function ModalApertura({ caja, onClose, onSaved }: {
+  caja: Caja; onClose: () => void; onSaved: () => void;
 }) {
+  const { usuario }       = useAuth();
+  const [monto, setMonto] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error,   setError]   = useState('');
+
+  const handleAbrir = async () => {
+    if (!usuario) return;
+    setLoading(true); setError('');
+    try {
+      await abrirCaja(caja.id, usuario.id, parseFloat(monto) || 0);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al abrir caja');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}>
-      <div className="rounded-2xl w-full max-w-lg shadow-2xl max-h-[90vh] flex flex-col"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Abrir {caja.nombre}</h2>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>
+              Monto inicial (S/)
+            </label>
+            <input type="number" min="0" step="0.01" value={monto}
+              onChange={e => setMonto(e.target.value)}
+              placeholder="0.00" autoFocus
+              className="w-full px-4 py-3 rounded-xl text-lg font-bold outline-none"
+              style={{ background: B.cream, border: `2px solid ${B.creamDark}`, color: B.charcoal }}
+              onFocus={e => e.currentTarget.style.borderColor = B.green}
+              onBlur={e => e.currentTarget.style.borderColor = B.creamDark} />
+          </div>
+          {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+        </div>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>Cancelar</button>
+          <button onClick={handleAbrir} disabled={loading}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+            style={{ background: B.green, color: B.cream }}>
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+            Abrir caja
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Cierre ─────────────────────────────────────────────────────────────
+function ModalCierre({ caja, onClose, onSaved }: {
+  caja: Caja; onClose: () => void; onSaved: () => void;
+}) {
+  const { usuario }           = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [saldoFinal, setSaldoFinal] = useState<number | null>(null);
+  const [error,   setError]   = useState('');
+
+  const handleCerrar = async () => {
+    if (!usuario) return;
+    setLoading(true); setError('');
+    try {
+      const saldo = await cerrarCaja(caja.id, usuario.id);
+      setSaldoFinal(saldo);
+      setTimeout(() => { onSaved(); }, 1500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al cerrar caja');
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Cerrar {caja.nombre}</h2>
+        </div>
+        <div className="p-6">
+          {saldoFinal !== null ? (
+            <div className="flex flex-col items-center py-4 gap-3">
+              <CheckCircle className="w-14 h-14" style={{ color: B.green }} />
+              <p className="text-lg font-bold" style={{ color: B.charcoal }}>Caja cerrada</p>
+              <div className="rounded-xl p-4 w-full text-center" style={{ background: B.cream }}>
+                <p className="text-xs uppercase tracking-widest mb-1" style={{ color: B.muted }}>Saldo final</p>
+                <p className="text-3xl font-black" style={{ color: B.green }}>S/ {saldoFinal.toFixed(2)}</p>
+              </div>
+            </div>
+          ) : (
+            <>
+              <div className="rounded-xl p-4 mb-4" style={{ background: B.cream }}>
+                <div className="flex justify-between text-sm mb-1">
+                  <span style={{ color: B.muted }}>Saldo actual</span>
+                  <span className="font-bold" style={{ color: B.charcoal }}>S/ {caja.monto_actual.toFixed(2)}</span>
+                </div>
+              </div>
+              <p className="text-sm text-center mb-4" style={{ color: B.muted }}>
+                ¿Confirmas el cierre de esta caja?
+              </p>
+              {error && <p className="text-xs px-3 py-2 rounded-xl mb-3" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+              <div className="flex gap-3">
+                <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+                  style={{ background: B.cream, color: B.charcoal }}>Cancelar</button>
+                <button onClick={handleCerrar} disabled={loading}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+                  style={{ background: B.terra, color: B.cream }}>
+                  {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                  Cerrar caja
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Reporte ────────────────────────────────────────────────────────────
+function ModalReporte({ caja, onClose }: { caja: Caja; onClose: () => void }) {
+  const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([]);
+  const [loading,     setLoading]     = useState(true);
+
+  React.useEffect(() => {
+    getMovimientosCaja(caja.id)
+      .then(data => setMovimientos(data as MovimientoCaja[]))
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [caja.id]);
+
+  const totalIngresos = movimientos.filter(m => m.tipo === 'ingreso').reduce((a, m) => a + m.monto, 0);
+  const totalEgresos  = movimientos.filter(m => m.tipo === 'egreso').reduce((a, m) => a + m.monto, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-lg shadow-2xl max-h-[85vh] flex flex-col"
         style={{ background: B.white }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b shrink-0" style={{ borderColor: B.cream }}>
-          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>{title}</h2>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Reporte · {caja.nombre}</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
             onMouseEnter={e => e.currentTarget.style.background = B.cream}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
             <X className="w-5 h-5" />
           </button>
         </div>
-        <div className="p-6 overflow-y-auto flex-1">{children}</div>
-        {actions && <div className="px-6 pb-6 flex gap-3 shrink-0">{actions}</div>}
+
+        <div className="p-6 overflow-y-auto flex-1">
+          {/* Resumen */}
+          <div className="grid grid-cols-3 gap-3 mb-5">
+            {[
+              { label: 'Saldo inicial', value: caja.monto_inicial, color: B.charcoal },
+              { label: 'Ingresos',      value: totalIngresos,      color: B.green   },
+              { label: 'Egresos',       value: totalEgresos,       color: B.terra   },
+            ].map(s => (
+              <div key={s.label} className="rounded-xl p-3 text-center" style={{ background: B.cream }}>
+                <p className="text-xs" style={{ color: B.muted }}>{s.label}</p>
+                <p className="text-lg font-black mt-0.5" style={{ color: s.color }}>
+                  S/ {s.value.toFixed(2)}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="rounded-xl p-3 mb-5 text-center" style={{ background: `${B.green}12`, border: `1px solid ${B.green}30` }}>
+            <p className="text-xs" style={{ color: B.green }}>Saldo actual</p>
+            <p className="text-2xl font-black" style={{ color: B.green }}>S/ {caja.monto_actual.toFixed(2)}</p>
+          </div>
+
+          {/* Movimientos */}
+          <p className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: B.muted }}>
+            Movimientos ({movimientos.length})
+          </p>
+          {loading ? (
+            <div className="flex justify-center py-6">
+              <Loader2 className="w-6 h-6 animate-spin" style={{ color: B.green }} />
+            </div>
+          ) : movimientos.length === 0 ? (
+            <p className="text-sm text-center py-4" style={{ color: B.muted }}>Sin movimientos registrados</p>
+          ) : (
+            <div className="space-y-2">
+              {movimientos.slice(0, 20).map(m => (
+                <div key={m.id} className="flex items-center justify-between p-3 rounded-xl"
+                  style={{ background: B.cream }}>
+                  <div>
+                    <p className="text-sm font-semibold" style={{ color: B.charcoal }}>{m.concepto}</p>
+                    <p className="text-xs" style={{ color: B.muted }}>
+                      {new Date(m.created_at).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
+                    </p>
+                  </div>
+                  <span className="text-sm font-black"
+                    style={{ color: m.tipo === 'ingreso' ? B.green : B.terra }}>
+                    {m.tipo === 'ingreso' ? '+' : '-'}S/ {m.monto.toFixed(2)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Egreso ─────────────────────────────────────────────────────────────
+function ModalEgreso({ caja, onClose, onSaved }: {
+  caja: Caja; onClose: () => void; onSaved: () => void;
+}) {
+  const { usuario }         = useAuth();
+  const [concepto, setConcepto] = useState('');
+  const [monto,    setMonto]    = useState('');
+  const [loading,  setLoading]  = useState(false);
+  const [error,    setError]    = useState('');
+
+  const handleRegistrar = async () => {
+    if (!concepto.trim()) { setError('Ingresa un concepto'); return; }
+    if (!monto || parseFloat(monto) <= 0) { setError('Ingresa un monto válido'); return; }
+    if (!usuario) return;
+    setLoading(true); setError('');
+    try {
+      const montoNum = parseFloat(monto);
+      // Registrar movimiento de egreso
+      await supabase.from('movimientos_caja').insert({
+        caja_id: caja.id, tipo: 'egreso', concepto,
+        monto: montoNum, usuario_id: usuario.id,
+      });
+      // Actualizar saldo de caja
+      await supabase.from('cajas')
+        .update({ monto_actual: caja.monto_actual - montoNum })
+        .eq('id', caja.id);
+      onSaved();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Error al registrar egreso');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const inp: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Registrar Egreso · {caja.nombre}</h2>
+        </div>
+        <div className="p-6 space-y-3">
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Concepto</label>
+            <input type="text" value={concepto} onChange={e => setConcepto(e.target.value)}
+              placeholder="Ej: Pago proveedor, Gastos varios..."
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+          </div>
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Monto (S/)</label>
+            <input type="number" min="0.01" step="0.01" value={monto} onChange={e => setMonto(e.target.value)}
+              placeholder="0.00" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+          </div>
+          {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+        </div>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>Cancelar</button>
+          <button onClick={handleRegistrar} disabled={loading}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+            style={{ background: B.terra, color: B.cream }}>
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+            Registrar egreso
+          </button>
+        </div>
       </div>
     </div>
   );
 }
 
 // ─── Modal Nueva Caja ─────────────────────────────────────────────────────────
-function ModalNuevaCaja({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
-  const { usuario } = useAuth();
-  const [nombre,       setNombre]       = useState('');
-  const [montoInicial, setMontoInicial] = useState('0');
-  const [guardando,    setGuardando]    = useState(false);
-  const [error,        setError]        = useState('');
+function ModalNuevaCaja({ onClose, onSaved, usuarios }: {
+  onClose: () => void; onSaved: () => void;
+  usuarios: Array<{ id: string; nombre: string }>;
+}) {
+  const [nombre,    setNombre]    = useState('');
+  const [usuarioId, setUsuarioId] = useState('');
+  const [zona,      setZona]      = useState('');
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState('');
 
-  const handleGuardar = async () => {
+  const handleCrear = async () => {
     if (!nombre.trim()) { setError('El nombre es obligatorio'); return; }
-    setGuardando(true); setError('');
+    setLoading(true); setError('');
     try {
-      await crearCaja(nombre.trim(), usuario?.id ?? null);
+      await crearCaja(nombre, usuarioId || null, zona || undefined);
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al crear');
+      setError(e instanceof Error ? e.message : 'Error al crear caja');
     } finally {
-      setGuardando(false);
+      setLoading(false);
     }
   };
 
+  const inp: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
+
   return (
-    <ModalBase title="Nueva Caja" onClose={onClose}
-      actions={<>
-        <button className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-          style={{ background: B.cream, color: B.charcoal }} onClick={onClose}>Cancelar</button>
-        <button onClick={handleGuardar} disabled={guardando}
-          className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-          style={{ background: B.green, color: B.cream }}>
-          {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
-          Crear
-        </button>
-      </>}>
-      <div className="space-y-3">
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Nombre de la caja</label>
-          <input type="text" value={nombre} onChange={e => setNombre(e.target.value)}
-            placeholder="Ej: Caja 4" className={inputCls()} style={INP} />
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Nueva Caja</h2>
         </div>
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Monto inicial (S/)</label>
-          <input type="number" value={montoInicial} onChange={e => setMontoInicial(e.target.value)}
-            placeholder="0.00" className={inputCls()} style={INP} />
+        <div className="p-6 space-y-3">
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre</label>
+            <input type="text" value={nombre} onChange={e => setNombre(e.target.value)}
+              placeholder="Ej: Caja 4" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+          </div>
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Zona (opcional)</label>
+            <select value={zona} onChange={e => setZona(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
+              <option value="">Sin zona específica</option>
+              <option value="Salón Principal">Salón Principal</option>
+              <option value="Terraza">Terraza</option>
+              <option value="Barra">Barra</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Usuario asignado</label>
+            <select value={usuarioId} onChange={e => setUsuarioId(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
+              <option value="">Sin usuario asignado</option>
+              {usuarios.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+          </div>
+          {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
         </div>
-        {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>Cancelar</button>
+          <button onClick={handleCrear} disabled={loading}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+            style={{ background: B.green, color: B.cream }}>
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+            Crear caja
+          </button>
+        </div>
       </div>
-    </ModalBase>
+    </div>
   );
 }
 
-// ─── Modal Egreso ─────────────────────────────────────────────────────────────
-function ModalEgreso({ caja, onClose, onSaved }: { caja: Caja; onClose: () => void; onSaved: () => void }) {
-  const { usuario } = useAuth();
-  const [concepto,  setConcepto]  = useState('');
-  const [monto,     setMonto]     = useState('');
-  const [guardando, setGuardando] = useState(false);
-  const [error,     setError]     = useState('');
-
-  const handleGuardar = async () => {
-    if (!concepto.trim() || !monto) { setError('Concepto y monto son obligatorios'); return; }
-    setGuardando(true); setError('');
-    try {
-      await registrarEgresoCaja(caja.id, concepto, parseFloat(monto), usuario!.id);
-      onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al registrar');
-    } finally {
-      setGuardando(false);
-    }
-  };
+// ─── Caja Card ────────────────────────────────────────────────────────────────
+function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEliminar }: {
+  caja: Caja;
+  onAbrir:   (c: Caja) => void;
+  onCerrar:  (c: Caja) => void;
+  onReporte: (c: Caja) => void;
+  onEgreso:  (c: Caja) => void;
+  onEliminar:(c: Caja) => void;
+}) {
+  const abierta = caja.estado === 'abierta';
 
   return (
-    <ModalBase title={`Egreso · ${caja.nombre}`} onClose={onClose}
-      actions={<>
-        <button className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-          style={{ background: B.cream, color: B.charcoal }} onClick={onClose}>Cancelar</button>
-        <button onClick={handleGuardar} disabled={guardando}
-          className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-          style={{ background: B.terra, color: B.cream }}>
-          {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
-          Registrar egreso
-        </button>
-      </>}>
-      <div className="space-y-3">
+    <div className="rounded-2xl p-5" style={{ background: B.white, border: `1px solid ${B.cream}` }}>
+      {/* Header */}
+      <div className="flex items-start justify-between mb-4">
         <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Concepto</label>
-          <input type="text" value={concepto} onChange={e => setConcepto(e.target.value)}
-            placeholder="Ej: Pago proveedor" className={inputCls()} style={INP} />
+          <h3 className="text-base font-bold" style={{ color: B.charcoal }}>{caja.nombre}</h3>
+          <p className="text-sm" style={{ color: B.muted }}>{caja.usuario?.nombre ?? 'Sin asignar'}</p>
+          {caja.zona && <p className="text-xs mt-0.5" style={{ color: B.muted }}>{caja.zona}</p>}
         </div>
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Monto (S/)</label>
-          <input type="number" value={monto} onChange={e => setMonto(e.target.value)}
-            placeholder="0.00" className={inputCls()} style={INP} />
-        </div>
-        {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+        <span className="text-[10px] font-bold px-2.5 py-1 rounded-full"
+          style={abierta ? { background: '#e8f5e2', color: B.green } : { background: '#fee2e2', color: B.terra }}>
+          {abierta ? 'Abierta' : 'Cerrada'}
+        </span>
       </div>
-    </ModalBase>
+
+      {/* Saldos */}
+      <div className="space-y-1.5 mb-4 pb-4 border-b" style={{ borderColor: B.cream }}>
+        <div className="flex justify-between text-sm">
+          <span style={{ color: B.muted }}>Saldo inicial</span>
+          <span className="font-semibold" style={{ color: B.charcoal }}>S/ {caja.monto_inicial.toFixed(2)}</span>
+        </div>
+        <div className="flex justify-between text-sm">
+          <span style={{ color: B.muted }}>Saldo actual</span>
+          <span className="text-lg font-black" style={{ color: B.green }}>S/ {caja.monto_actual.toFixed(2)}</span>
+        </div>
+      </div>
+
+      {/* Fechas */}
+      {caja.fecha_apertura && (
+        <div className="text-xs space-y-0.5 mb-4" style={{ color: B.muted }}>
+          <p>Apertura: {new Date(caja.fecha_apertura).toLocaleString('es-PE', { timeZone: 'America/Lima', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</p>
+          {caja.fecha_cierre && <p>Cierre: {new Date(caja.fecha_cierre).toLocaleString('es-PE', { timeZone: 'America/Lima', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</p>}
+        </div>
+      )}
+
+      {/* Acciones */}
+      <div className="space-y-2">
+        <div className="flex gap-2">
+          {!abierta && (
+            <button onClick={() => onAbrir(caja)}
+              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
+              style={{ background: B.green, color: B.cream }}>
+              <CheckCircle className="w-4 h-4" /> Abrir
+            </button>
+          )}
+          {abierta && (
+            <button onClick={() => onCerrar(caja)}
+              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
+              style={{ background: B.terra, color: B.cream }}>
+              <Lock className="w-4 h-4" /> Cerrar
+            </button>
+          )}
+          <button onClick={() => onReporte(caja)}
+            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
+            style={{ background: B.charcoal, color: B.cream }}>
+            <Eye className="w-4 h-4" /> Reporte
+          </button>
+        </div>
+
+        {!abierta && (
+          <div className="grid grid-cols-3 gap-2">
+            <button onClick={() => onEgreso(caja)}
+              className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold"
+              style={{ background: '#fef0e6', color: B.terra }}>
+              <TrendingDown className="w-3.5 h-3.5" /> Egreso
+            </button>
+            <button className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold"
+              style={{ background: B.cream, color: B.charcoal }}>
+              <Edit className="w-3.5 h-3.5" /> Editar
+            </button>
+            <button onClick={() => onEliminar(caja)}
+              className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold"
+              style={{ background: '#fee2e2', color: B.terra }}>
+              <Trash2 className="w-3.5 h-3.5" /> Eliminar
+            </button>
+          </div>
+        )}
+
+        {!abierta && (
+          <p className="text-[10px] text-center py-1.5 rounded-lg" style={{ background: `${B.green}10`, color: B.green }}>
+            💡 Se abrirá automáticamente al iniciar sesión
+          </p>
+        )}
+      </div>
+    </div>
   );
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
+type ModalState =
+  | { tipo: 'apertura'; caja: Caja }
+  | { tipo: 'cierre';   caja: Caja }
+  | { tipo: 'reporte';  caja: Caja }
+  | { tipo: 'egreso';   caja: Caja }
+  | { tipo: 'nueva' }
+  | null;
+
 export function CajasView() {
-  const { cajas, isLoading, refetchCajas } = useGlobalData();
-  const { usuario } = useAuth();
-  const [modalNueva,   setModalNueva]   = useState(false);
-  const [modalReporte, setModalReporte] = useState<Caja | null>(null);
-  const [modalEgreso,  setModalEgreso]  = useState<Caja | null>(null);
-  const [procesando,   setProcesando]   = useState<string | null>(null);
+  const { cajas, usuarios, isLoading, refetchCajas } = useGlobalData();
+  const [modal, setModal] = useState<ModalState>(null);
 
   const totalEnCajas = cajas.reduce((a, c) => a + c.monto_actual, 0);
+  const abiertas     = cajas.filter(c => c.estado === 'abierta').length;
+  const cerradas     = cajas.filter(c => c.estado === 'cerrada').length;
 
-  const handleAbrirCaja = async (caja: Caja) => {
-    if (!usuario) return;
-    setProcesando(caja.id);
-    try {
-      await abrirCaja(caja.id, usuario.id, caja.monto_inicial);
-      refetchCajas();
-    } catch (e) { console.error(e); }
-    finally { setProcesando(null); }
+  const handleEliminar = async (caja: Caja) => {
+    if (!confirm(`¿Eliminar ${caja.nombre}? Esta acción no se puede deshacer.`)) return;
+    await supabase.from('cajas').delete().eq('id', caja.id);
+    refetchCajas();
   };
 
-  const handleCerrarCaja = async (caja: Caja) => {
-    if (!confirm(`¿Cerrar ${caja.nombre}?`) || !usuario) return;
-    setProcesando(caja.id);
-    try {
-      await cerrarCaja(caja.id, usuario.id);
-      refetchCajas();
-    } catch (e) { console.error(e); }
-    finally { setProcesando(null); }
-  };
+  const onGuardado = () => { setModal(null); refetchCajas(); };
 
   if (isLoading) return (
     <div className="flex items-center justify-center min-h-[60vh]">
@@ -182,139 +505,45 @@ export function CajasView() {
 
   return (
     <div>
-      <PageHeader
-        title="Gestión de Cajas"
+      <PageHeader title="Gestión de Cajas"
         subtitle="Administra el estado y operaciones de las cajas del sistema"
-        action={<Btn onClick={() => setModalNueva(true)}><Plus className="w-4 h-4" />Nueva Caja</Btn>}
-      />
+        action={<Btn onClick={() => setModal({ tipo: 'nueva' })}><Plus className="w-4 h-4" />Nueva Caja</Btn>} />
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-        <KpiCard label="Total en Cajas"  value={`S/ ${totalEnCajas.toFixed(2)}`}                        icon={DollarSign}  color={B.green} />
-        <KpiCard label="Total de Cajas"  value={cajas.length}                                           icon={CreditCard}  color={B.gold} />
-        <KpiCard label="Cajas Abiertas"  value={cajas.filter(c => c.estado === 'abierta').length}       icon={CheckCircle} color={B.green} />
-        <KpiCard label="Cajas Cerradas"  value={cajas.filter(c => c.estado === 'cerrada').length}       icon={Lock}        color={B.terra} />
+        <KpiCard label="Total en Cajas" value={`S/ ${totalEnCajas.toFixed(2)}`} icon={DollarSign}  color={B.green} />
+        <KpiCard label="Total Cajas"    value={cajas.length}                     icon={CreditCard}  color={B.gold} />
+        <KpiCard label="Abiertas"       value={abiertas}                         icon={CheckCircle} color={B.green} />
+        <KpiCard label="Cerradas"       value={cerradas}                         icon={Lock}        color={B.terra} />
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {cajas.map(caja => (
-          <div key={caja.id} className="rounded-2xl p-5" style={{ background: B.white, border: `1px solid ${B.cream}` }}>
-            <div className="flex items-start justify-between mb-4">
-              <div>
-                <h3 className="text-base font-bold" style={{ color: B.charcoal }}>{caja.nombre}</h3>
-                <p className="text-sm" style={{ color: B.muted }}>
-                  {(caja.usuario as { nombre?: string } | null)?.nombre ?? 'Sin usuario'}
-                </p>
-              </div>
-              <span className="text-[10px] font-bold px-2.5 py-1 rounded-full"
-                style={caja.estado === 'abierta'
-                  ? { background: '#e8f5e2', color: B.green }
-                  : { background: '#fee2e2', color: B.terra }}>
-                {caja.estado === 'abierta' ? 'Abierta' : 'Cerrada'}
-              </span>
-            </div>
-
-            <div className="space-y-1.5 mb-4 pb-4 border-b" style={{ borderColor: B.cream }}>
-              <div className="flex justify-between text-sm">
-                <span style={{ color: B.muted }}>Saldo inicial:</span>
-                <span className="font-semibold" style={{ color: B.charcoal }}>S/ {caja.monto_inicial.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span style={{ color: B.muted }}>Saldo actual:</span>
-                <span className="text-lg font-black" style={{ color: B.green }}>S/ {caja.monto_actual.toFixed(2)}</span>
-              </div>
-            </div>
-
-            {caja.fecha_apertura && (
-              <div className="text-xs space-y-0.5 mb-4" style={{ color: B.muted }}>
-                <p>Apertura: {new Date(caja.fecha_apertura).toLocaleString('es-PE')}</p>
-                {caja.fecha_cierre && <p>Cierre: {new Date(caja.fecha_cierre).toLocaleString('es-PE')}</p>}
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <div className="flex gap-2">
-                {caja.estado === 'abierta' ? (
-                  <button onClick={() => handleCerrarCaja(caja)} disabled={procesando === caja.id}
-                    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold disabled:opacity-60"
-                    style={{ background: B.terra, color: B.cream }}>
-                    {procesando === caja.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                    Cerrar
-                  </button>
-                ) : (
-                  <button onClick={() => handleAbrirCaja(caja)} disabled={procesando === caja.id}
-                    className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold disabled:opacity-60"
-                    style={{ background: B.green, color: B.cream }}>
-                    {procesando === caja.id ? <Loader2 className="w-4 h-4 animate-spin" /> : <Power className="w-4 h-4" />}
-                    Abrir
-                  </button>
-                )}
-                <button onClick={() => setModalReporte(caja)}
-                  className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
-                  style={{ background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}>
-                  <Eye className="w-4 h-4" /> Reporte
-                </button>
-              </div>
-
-              {caja.estado === 'abierta' && (
-                <button onClick={() => setModalEgreso(caja)}
-                  className="w-full flex items-center justify-center gap-2 py-2 rounded-xl text-xs font-bold"
-                  style={{ background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}>
-                  <TrendingDown className="w-3.5 h-3.5" /> Registrar egreso
-                </button>
-              )}
-
-              {caja.estado === 'cerrada' && (
-                <p className="text-[10px] text-center py-1.5 rounded-lg" style={{ background: `${B.green}10`, color: B.green }}>
-                  💡 Se abrirá automáticamente al iniciar sesión
-                </p>
-              )}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {modalNueva && (
-        <ModalNuevaCaja onClose={() => setModalNueva(false)}
-          onSaved={() => { setModalNueva(false); refetchCajas(); }} />
+      {cajas.length === 0 ? (
+        <div className="text-center py-16" style={{ color: B.muted }}>
+          <p className="text-sm">No hay cajas configuradas.</p>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cajas.map(caja => (
+            <CajaCard key={caja.id} caja={caja}
+              onAbrir={c   => setModal({ tipo: 'apertura', caja: c })}
+              onCerrar={c  => setModal({ tipo: 'cierre',   caja: c })}
+              onReporte={c => setModal({ tipo: 'reporte',  caja: c })}
+              onEgreso={c  => setModal({ tipo: 'egreso',   caja: c })}
+              onEliminar={handleEliminar} />
+          ))}
+        </div>
       )}
 
-      {modalEgreso && (
-        <ModalEgreso caja={modalEgreso} onClose={() => setModalEgreso(null)}
-          onSaved={() => { setModalEgreso(null); refetchCajas(); }} />
-      )}
-
-      {modalReporte && (
-        <ModalBase title={`Reporte · ${modalReporte.nombre}`} onClose={() => setModalReporte(null)}>
-          <div className="space-y-3">
-            <div className="rounded-xl p-4" style={{ background: B.cream }}>
-              <div className="flex justify-between mb-2">
-                <span className="text-sm" style={{ color: B.muted }}>Usuario</span>
-                <span className="text-sm font-bold" style={{ color: B.charcoal }}>
-                  {(modalReporte.usuario as { nombre?: string } | null)?.nombre ?? '-'}
-                </span>
-              </div>
-              <div className="flex justify-between mb-2">
-                <span className="text-sm" style={{ color: B.muted }}>Saldo inicial</span>
-                <span className="text-sm font-bold" style={{ color: B.charcoal }}>S/ {modalReporte.monto_inicial.toFixed(2)}</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-sm" style={{ color: B.muted }}>Saldo actual</span>
-                <span className="text-lg font-black" style={{ color: B.green }}>S/ {modalReporte.monto_actual.toFixed(2)}</span>
-              </div>
-            </div>
-            <div className="flex gap-2 pt-2">
-              <button onClick={() => setModalReporte(null)}
-                className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-                style={{ background: B.cream, color: B.charcoal }}>
-                Cerrar
-              </button>
-              <button className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-                style={{ background: B.green, color: B.cream }}>
-                <Edit className="w-4 h-4" /> Ver movimientos
-              </button>
-            </div>
-          </div>
-        </ModalBase>
+      {/* Modales */}
+      {modal?.tipo === 'apertura' && <ModalApertura caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
+      {modal?.tipo === 'cierre'   && <ModalCierre   caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
+      {modal?.tipo === 'reporte'  && <ModalReporte  caja={modal.caja} onClose={() => setModal(null)} />}
+      {modal?.tipo === 'egreso'   && <ModalEgreso   caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
+      {modal?.tipo === 'nueva'    && (
+        <ModalNuevaCaja
+          onClose={() => setModal(null)}
+          onSaved={onGuardado}
+          usuarios={usuarios.map(u => ({ id: u.id, nombre: u.nombre }))}
+        />
       )}
     </div>
   );
