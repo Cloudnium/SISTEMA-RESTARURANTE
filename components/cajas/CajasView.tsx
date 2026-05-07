@@ -237,22 +237,16 @@ function ModalEgreso({ caja, onClose, onSaved }: {
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
+  // ModalEgreso — handleRegistrar
   const handleRegistrar = async () => {
     if (!concepto.trim()) { setError('Ingresa un concepto'); return; }
     if (!monto || parseFloat(monto) <= 0) { setError('Ingresa un monto válido'); return; }
     if (!usuario) return;
     setLoading(true); setError('');
     try {
-      const montoNum = parseFloat(monto);
-      // Registrar movimiento de egreso
-      await supabase.from('movimientos_caja').insert({
-        caja_id: caja.id, tipo: 'egreso', concepto,
-        monto: montoNum, usuario_id: usuario.id,
-      });
-      // Actualizar saldo de caja
-      await supabase.from('cajas')
-        .update({ monto_actual: caja.monto_actual - montoNum })
-        .eq('id', caja.id);
+      // Usar la función de queries que ya existe en lugar de llamadas directas
+      const { registrarEgresoCaja } = await import('@/lib/supabase/queries');
+      await registrarEgresoCaja(caja.id, concepto, parseFloat(monto), usuario.id);
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al registrar egreso');
