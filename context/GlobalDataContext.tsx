@@ -6,7 +6,7 @@ import React, {
   useCallback, useMemo, useRef,
 } from 'react';
 import {
-  getProductos, getMesas, getClientes, getCajas,
+  getProductos, getMesasConPedido, getClientes, getCajas,
   getVentasHoy, getVentasRecientes, getVentasSemana,
   getComprobantes, getCompras, getUsuarios,
   getProduccionHoy, getNotificacionesSinLeer,
@@ -78,11 +78,9 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const [isLoading,         setIsLoading]         = useState(true);
   const [isLoadingComplete, setIsLoadingComplete] = useState(false);
 
-  const cargaIniciadaRef  = useRef(false);
-  // ⚠️ Este ref se actualiza SOLO dentro de un useEffect (nunca durante render)
-  const usuarioActualRef  = useRef<Usuario | null>(null);
+  const cargaIniciadaRef = useRef(false);
+  const usuarioActualRef = useRef<Usuario | null>(null);
 
-  // Sincronizar ref con el estado (en effect, no en render)
   useEffect(() => {
     usuarioActualRef.current = usuarioActual;
   }, [usuarioActual]);
@@ -94,7 +92,10 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   const refetchMesas = useCallback(async () => {
-    try { setMesas(await getMesas()); } // IA dice cambiar a getMesasConPedido
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      setMesas((await getMesasConPedido()) as any[]);
+    }
     catch (e) { console.error('mesas:', e); }
   }, []);
 
@@ -146,7 +147,6 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('ventasRecientes:', e); }
   }, []);
 
-  // Sin dependencias: accede al uid desde el ref en tiempo de ejecución
   const refetchNotificaciones = useCallback(async () => {
     const uid = usuarioActualRef.current?.id;
     if (!uid) return;
@@ -159,6 +159,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     setIsLoading(true);
     setIsLoadingComplete(false);
 
+    // Fase 1: datos críticos para mostrar la UI principal
     await Promise.allSettled([
       refetchProductos(),
       refetchMesas(),
@@ -168,6 +169,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
 
     setIsLoading(false);
 
+    // Fase 2: datos secundarios
     await Promise.allSettled([
       refetchClientes(),
       refetchCajas(),
@@ -175,6 +177,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       refetchMetricas(),
     ]);
 
+    // Fase 3: datos menos urgentes
     await Promise.allSettled([
       refetchCompras(),
       refetchProduccion(),
@@ -205,11 +208,8 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
       async (_event, session) => {
-        if (session?.user) {
-          await cargarPerfil(session.user.id);
-        } else {
-          setUsuarioActual(null);
-        }
+        if (session?.user) await cargarPerfil(session.user.id);
+        else setUsuarioActual(null);
       },
     );
 
@@ -225,19 +225,50 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   }, [refetchAll]);
 
   // ── Realtime ───────────────────────────────────────────────────────────────
+  // Usamos refs para las funciones de refetch para evitar re-suscribirse
+  // cada vez que cambia alguna dependencia del useCallback.
+  const refetchMesasRef         = useRef(refetchMesas);
+  const refetchVentasRef        = useRef(refetchVentas);
+  const refetchVentasRecRef     = useRef(refetchVentasRecientes);
+  const refetchMetricasRef      = useRef(refetchMetricas);
+  const refetchNotificacionesRef = useRef(refetchNotificaciones);
+  const refetchUsuariosRef      = useRef(refetchUsuarios);
+
+  useEffect(() => { refetchMesasRef.current          = refetchMesas;          }, [refetchMesas]);
+  useEffect(() => { refetchVentasRef.current         = refetchVentas;         }, [refetchVentas]);
+  useEffect(() => { refetchVentasRecRef.current      = refetchVentasRecientes; }, [refetchVentasRecientes]);
+  useEffect(() => { refetchMetricasRef.current       = refetchMetricas;       }, [refetchMetricas]);
+  useEffect(() => { refetchNotificacionesRef.current = refetchNotificaciones;  }, [refetchNotificaciones]);
+  useEffect(() => { refetchUsuariosRef.current       = refetchUsuarios;       }, [refetchUsuarios]);
+
   useEffect(() => {
     const canal = supabase
       .channel('global-realtime')
+      // Mesas: se actualizan cuando cambia la mesa O el pedido activo
       .on('postgres_changes', { event: '*', schema: 'public', table: 'mesas' },
-        () => { refetchMesas(); })
+        () => refetchMesasRef.current())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' },
+        () => refetchMesasRef.current())
+      // Ventas y métricas del dashboard
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ventas' },
-        () => { refetchVentas(); refetchVentasRecientes(); refetchMetricas(); })
+        () => {
+          refetchVentasRef.current();
+          refetchVentasRecRef.current();
+          refetchMetricasRef.current();
+        })
+      // Usuarios: actualizar tabla cuando se crea/modifica un usuario
+      // (el INSERT lo hace la API Route con service_role, Realtime igual lo detecta)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'usuarios' },
+        () => refetchUsuariosRef.current())
+      // Notificaciones
       .on('postgres_changes', { event: '*', schema: 'public', table: 'notificaciones' },
-        () => { refetchNotificaciones(); })
+        () => refetchNotificacionesRef.current())
       .subscribe();
 
     return () => { supabase.removeChannel(canal); };
-  }, [refetchMesas, refetchVentas, refetchVentasRecientes, refetchMetricas, refetchNotificaciones]);
+  // Solo corre una vez — los refs mantienen las funciones actualizadas
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const value = useMemo<GlobalDataContextType>(() => ({
     productos, mesas, clientes, cajas,

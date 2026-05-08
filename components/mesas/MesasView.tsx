@@ -12,12 +12,10 @@ import { actualizarEstadoMesa, crearMesa } from '@/lib/supabase/queries';
 import type { EstadoMesa, Mesa } from '@/lib/supabase/types';
 import Image from 'next/image';
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 interface EstadoConfig {
   label: string; color: string; bg: string; icon: React.ElementType;
 }
 
-// ─── Config ───────────────────────────────────────────────────────────────────
 const ESTADOS: Record<EstadoMesa, EstadoConfig> = {
   disponible: { label: 'Disponible', color: '#5C7A3E', bg: '#e8f5e2', icon: CircleCheck },
   ocupada:    { label: 'Ocupada',    color: '#D4673A', bg: '#fef0e6', icon: UtensilsCrossed },
@@ -39,29 +37,34 @@ const COLOR_FILTERS: Record<EstadoMesa, string> = {
   reservada:  'invert(35%) sepia(40%) saturate(600%) hue-rotate(190deg) brightness(90%)',
 };
 
-// ─── Ilustración ──────────────────────────────────────────────────────────────
+// Estados que cierran el modal al seleccionarlos
+const ESTADOS_CIERRAN_MODAL: EstadoMesa[] = ['disponible', 'limpieza', 'reservada'];
+
 function IlustracionMesa({ estado }: { estado: EstadoMesa }) {
   return (
     <Image
-      src={ICONOS[estado]}
-      alt=""
-      width={65}
-      height={65}
-      aria-hidden="true"
+      src={ICONOS[estado]} alt="" width={65} height={65} aria-hidden="true"
       className="w-full h-full object-contain"
       style={{ filter: COLOR_FILTERS[estado] }}
     />
   );
 }
-type MesaRow = Mesa & { pedido_id?: string|null; pedido_total?: number|null; pedido_inicio?: string|null; minutos_ocupada?: number|null; mozo?: string|null };
+
+type MesaRow = Mesa & {
+  pedido_id?: string | null;
+  pedido_total?: number | null;
+  pedido_inicio?: string | null;
+  minutos_ocupada?: number | null;
+  mozo?: string | null;
+};
+
 // ─── MesaCard ─────────────────────────────────────────────────────────────────
 function MesaCard({ mesa, onClick }: { mesa: MesaRow; onClick: (m: MesaRow) => void }) {
   const estado: EstadoMesa = mesa.estado ?? 'disponible';
   const est = ESTADOS[estado];
-
-  const cliente   = mesa.mozo ?? null;
+  const cliente     = mesa.mozo ?? null;
   const pedidoTotal = mesa.pedido_total != null ? `S/ ${Number(mesa.pedido_total).toFixed(2)}` : null;
-  const hora = mesa.pedido_inicio
+  const hora        = mesa.pedido_inicio
     ? new Date(mesa.pedido_inicio).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })
     : null;
 
@@ -72,7 +75,6 @@ function MesaCard({ mesa, onClick }: { mesa: MesaRow; onClick: (m: MesaRow) => v
       onMouseEnter={e => { e.currentTarget.style.boxShadow = `0 4px 16px ${est.color}30`; e.currentTarget.style.borderColor = est.color; }}
       onMouseLeave={e => { e.currentTarget.style.boxShadow = 'none'; e.currentTarget.style.borderColor = `${est.color}30`; }}>
 
-      {/* Columna izquierda */}
       <div className="flex flex-col gap-1.5 flex-1 min-w-0 z-10">
         <div className="flex flex-col gap-0.5">
           <p className="text-sm font-black tracking-widest uppercase" style={{ color: est.color }}>
@@ -86,7 +88,7 @@ function MesaCard({ mesa, onClick }: { mesa: MesaRow; onClick: (m: MesaRow) => v
 
         {estado === 'ocupada' && (
           <div className="mt-auto">
-            {cliente && <p className="text-xs font-semibold truncate" style={{ color: B.charcoal }}>{cliente}</p>}
+            {cliente     && <p className="text-xs font-semibold truncate" style={{ color: B.charcoal }}>{cliente}</p>}
             {pedidoTotal && <p className="text-xs font-bold" style={{ color: est.color }}>{pedidoTotal}</p>}
             {hora && (
               <div className="flex items-center gap-1">
@@ -106,7 +108,6 @@ function MesaCard({ mesa, onClick }: { mesa: MesaRow; onClick: (m: MesaRow) => v
         )}
       </div>
 
-      {/* Columna derecha */}
       <div className="flex flex-col items-end justify-between shrink-0 pointer-events-none" style={{ width: 65 }}>
         <span className="pointer-events-auto flex items-center gap-1 text-[9px] font-bold px-2 py-1 rounded-full"
           style={{ background: `${est.color}18`, color: est.color, border: `1px solid ${est.color}30` }}>
@@ -141,7 +142,7 @@ function ModalNuevaMesa({ onClose, onSaved }: { onClose: () => void; onSaved: ()
       await crearMesa({
         numero: numero.trim(),
         nombre: nombre.trim() || `Mesa ${numero.trim()}`,
-        zona: zona.trim(),
+        zona:   zona.trim(),
         capacidad: parseInt(capacidad) || 4,
       });
       onSaved();
@@ -200,7 +201,8 @@ function ModalNuevaMesa({ onClose, onSaved }: { onClose: () => void; onSaved: ()
 
 // ─── MesaModal ────────────────────────────────────────────────────────────────
 function MesaModal({ mesa, onClose, onCambiarEstado, cambiando }: {
-  mesa: MesaRow; onClose: () => void;
+  mesa: MesaRow;
+  onClose: () => void;
   onCambiarEstado: (id: string, estado: EstadoMesa) => Promise<void>;
   cambiando: boolean;
 }) {
@@ -219,9 +221,7 @@ function MesaModal({ mesa, onClose, onCambiarEstado, cambiando }: {
             <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
               {mesa.nombre ?? `Mesa ${mesa.numero}`}
             </h2>
-            <p className="text-xs" style={{ color: B.muted }}>
-              {mesa.zona} · {mesa.capacidad} personas
-            </p>
+            <p className="text-xs" style={{ color: B.muted }}>{mesa.zona} · {mesa.capacidad} personas</p>
           </div>
           <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
             style={{ background: est.bg, color: est.color }}>
@@ -249,20 +249,26 @@ function MesaModal({ mesa, onClose, onCambiarEstado, cambiando }: {
           <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: B.muted }}>
             Cambiar estado
           </p>
-          {(Object.entries(ESTADOS) as [EstadoMesa, EstadoConfig][]).map(([key, val]) => (
-            <button key={key} onClick={() => onCambiarEstado(mesa.id, key)} disabled={cambiando}
-              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all disabled:opacity-60"
-              style={{
-                background: estado === key ? val.bg : 'transparent',
-                color:      estado === key ? val.color : B.charcoal,
-                border: `1px solid ${estado === key ? val.color : B.cream}`,
-              }}>
-              <val.icon className="w-4 h-4 shrink-0" style={{ color: val.color }} />
-              {val.label}
-              {estado === key && !cambiando && <CheckCircle className="w-4 h-4 ml-auto" style={{ color: val.color }} />}
-              {estado === key && cambiando  && <Loader2    className="w-4 h-4 ml-auto animate-spin" style={{ color: val.color }} />}
-            </button>
-          ))}
+          {(Object.entries(ESTADOS) as [EstadoMesa, EstadoConfig][]).map(([key, val]) => {
+            const esActual = estado === key;
+            return (
+              <button key={key}
+                onClick={() => !esActual && onCambiarEstado(mesa.id, key)}
+                disabled={cambiando || esActual}
+                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
+                style={{
+                  background: esActual ? val.bg : 'transparent',
+                  color:      esActual ? val.color : B.charcoal,
+                  border:     `1px solid ${esActual ? val.color : B.cream}`,
+                  cursor:     esActual ? 'default' : cambiando ? 'not-allowed' : 'pointer',
+                  opacity:    cambiando && !esActual ? 0.5 : 1,
+                }}>
+                <val.icon className="w-4 h-4 shrink-0" style={{ color: val.color }} />
+                {val.label}
+                {esActual && <CheckCircle className="w-4 h-4 ml-auto" style={{ color: val.color }} />}
+              </button>
+            );
+          })}
         </div>
 
         {estado === 'ocupada' && (
@@ -279,12 +285,11 @@ function MesaModal({ mesa, onClose, onCambiarEstado, cambiando }: {
 // ─── Main export ──────────────────────────────────────────────────────────────
 export default function MesasView() {
   const { mesas, isLoading, refetchMesas } = useGlobalData();
-  const [selected,     setSelected]     = useState<MesaRow | null>(null);
-  const [cambiando,    setCambiando]    = useState(false);
-  const [modalNueva,   setModalNueva]   = useState(false);
+  const [selected,   setSelected]   = useState<MesaRow | null>(null);
+  const [cambiando,  setCambiando]  = useState(false);
+  const [modalNueva, setModalNueva] = useState(false);
 
-  const zonas = useMemo(() => [...new Set(mesas.map(m => m.zona))].sort(), [mesas]);
-
+  const zonas  = useMemo(() => [...new Set(mesas.map(m => m.zona))].sort(), [mesas]);
   const counts = useMemo(() =>
     (Object.keys(ESTADOS) as EstadoMesa[]).reduce(
       (acc, k) => ({ ...acc, [k]: mesas.filter(m => m.estado === k).length }),
@@ -292,15 +297,29 @@ export default function MesasView() {
     ), [mesas]);
 
   const handleCambiarEstado = async (id: string, nuevoEstado: EstadoMesa) => {
-    if (selected?.estado === nuevoEstado) return;
+    if (!selected || selected.estado === nuevoEstado || cambiando) return;
     setCambiando(true);
+
     try {
+      // 1. Actualizar en BD — sin await en refetch, el Realtime lo hace solo
       await actualizarEstadoMesa(id, nuevoEstado);
-      await refetchMesas();
-      // Actualiza el modal con el nuevo estado
-      setSelected((prev: MesaRow | null) => prev ? { ...prev, estado: nuevoEstado } : null);
+
+      // 2. Si el nuevo estado NO es "ocupada" → cerrar modal inmediatamente
+      if (ESTADOS_CIERRAN_MODAL.includes(nuevoEstado)) {
+        setSelected(null);
+      } else {
+        // Si es "ocupada" → mantener modal abierto con estado actualizado
+        setSelected(prev => prev ? { ...prev, estado: nuevoEstado } : null);
+      }
+
+      // 3. Refetch en segundo plano para sincronizar el resto de datos
+      //    (no bloqueamos la UI con await)
+      refetchMesas().catch(console.error);
+
     } catch (e) {
-      console.error(e);
+      console.error('Error al cambiar estado:', e);
+      // Forzar refetch para revertir cualquier estado inconsistente
+      refetchMesas().catch(console.error);
     } finally {
       setCambiando(false);
     }
@@ -344,7 +363,7 @@ export default function MesasView() {
           </h2>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3">
             {mesas.filter(m => m.zona === zona).map(mesa => (
-              <MesaCard key={mesa.id} mesa={mesa} onClick={setSelected} />
+              <MesaCard key={mesa.id} mesa={mesa as MesaRow} onClick={setSelected} />
             ))}
           </div>
         </div>

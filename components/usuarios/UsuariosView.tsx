@@ -12,7 +12,6 @@ import { useGlobalData } from '@/context/GlobalDataContext';
 import { supabase } from '@/lib/supabase/client';
 import type { Usuario, RolUsuario } from '@/lib/supabase/types';
 
-// ─── cliente con tipado relajado (igual que en queries/index.ts) ──────────────
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
 
@@ -73,35 +72,27 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
 
     try {
       if (esNuevo) {
-        // 1. Crear en Supabase Auth con signUp (disponible en cliente)
-        const { data: authData, error: authErr } = await supabase.auth.signUp({
-          email:    form.email,
-          password: form.password,
-          options: {
-            data: { nombre: form.nombre, rol: form.rol },
-          },
+        // ✅ FIX: Llamar a la API Route del servidor en vez de signUp directo.
+        //    Esto evita que Supabase haga auto-login con el nuevo usuario y desloguee al admin.
+        const res = await fetch('/api/usuarios', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            nombre:   form.nombre,
+            email:    form.email,
+            password: form.password,
+            rol:      form.rol,
+            dni:      form.dni     || null,
+            caja_id:  form.caja_id || null,
+            activo:   form.activo,
+          }),
         });
-        if (authErr) throw authErr;
-        if (!authData.user) throw new Error('No se pudo crear el usuario en Auth.');
 
-        // 2. El trigger de Supabase crea la fila en `usuarios`.
-        //    Esperamos brevemente para que el trigger se ejecute y luego actualizamos el perfil.
-        await new Promise(r => setTimeout(r, 800));
-
-        const { error: profileErr } = await db
-          .from('usuarios')
-          .update({
-            nombre:  form.nombre,
-            rol:     form.rol,
-            dni:     form.dni     || null,
-            caja_id: form.caja_id || null,
-            activo:  form.activo,
-          })
-          .eq('id', authData.user.id);
-        if (profileErr) throw profileErr;
+        const json = await res.json();
+        if (!res.ok) throw new Error(json.error ?? 'Error al crear el usuario');
 
       } else {
-        // Actualizar perfil existente
+        // Actualizar perfil existente (nombre, rol, dni, caja, activo)
         const { error: profileErr } = await db
           .from('usuarios')
           .update({
@@ -114,14 +105,20 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
           .eq('id', usuario!.id);
         if (profileErr) throw profileErr;
 
-        // Cambiar contraseña sólo si el admin ingresó una nueva
-        // Nota: updateUser sólo puede cambiar la contraseña del usuario en sesión actual.
-        // Para cambiar la de otro usuario desde el cliente no es posible sin service_role.
-        // Se muestra aviso informativo si se intenta.
+        // ✅ FIX: Cambiar contraseña de otro usuario también via API Route (usa service_role)
         if (form.password) {
-          setError('ℹ️ Para cambiar la contraseña de otro usuario, hacelo desde Supabase Dashboard → Authentication → Users.');
-          setLoading(false);
-          return;
+          if (form.password.length < 6) {
+            setError('La contraseña debe tener al menos 6 caracteres');
+            setLoading(false);
+            return;
+          }
+          const res = await fetch('/api/usuarios', {
+            method:  'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ userId: usuario!.id, password: form.password }),
+          });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error ?? 'Error al cambiar la contraseña');
         }
       }
 
@@ -133,8 +130,6 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
       setLoading(false);
     }
   };
-
-  // ... resto del JSX igual que el original (no cambia nada visual)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -189,6 +184,11 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
               onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
               placeholder={esNuevo ? 'Mínimo 6 caracteres' : '••••••••'}
               className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+            {!esNuevo && (
+              <p className="text-[10px] mt-1" style={{ color: B.muted }}>
+                Ingresa una contraseña nueva si deseas cambiarla
+              </p>
+            )}
           </div>
 
           {/* Rol */}
@@ -372,7 +372,6 @@ export function UsuariosView() {
                   onMouseEnter={e => e.currentTarget.style.background = `${B.cream}50`}
                   onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
 
-                  {/* Avatar + nombre */}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0"
@@ -385,7 +384,6 @@ export function UsuariosView() {
 
                   <td className="px-4 py-3 text-sm" style={{ color: B.muted }}>{u.email}</td>
 
-                  {/* Rol badge */}
                   <td className="px-4 py-3">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={{ background: rolCfg.bg, color: rolCfg.color }}>
@@ -401,7 +399,6 @@ export function UsuariosView() {
                     {(u as Usuario & { caja?: { nombre: string } | null }).caja?.nombre ?? '-'}
                   </td>
 
-                  {/* Estado */}
                   <td className="px-4 py-3">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={u.activo
@@ -412,7 +409,6 @@ export function UsuariosView() {
                     </span>
                   </td>
 
-                  {/* Acciones */}
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
                       <button onClick={() => setModal({ open: true, usuario: u })}

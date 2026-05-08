@@ -6,14 +6,8 @@ import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ChevronDown, Check } from 'lucide-react';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { B } from '@/lib/brand';
-import { supabase as _supabase } from '@/lib/supabase/client';
 import type { RolUsuario } from '@/lib/supabase/types';
 import Image from 'next/image';
-
-// Cliente con tipado relajado para escrituras — mismo patrón que queries/index.ts
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const db = _supabase as any;
-const supabase = _supabase;
 
 // ─── Tipos ────────────────────────────────────────────────────────────────────
 interface FormData {
@@ -207,7 +201,7 @@ export default function RegisterPage() {
     return null;
   }
 
-  // ── Submit ────────────────────────────────────────────────────────────────────
+  // ── Submit — llama a la API Route del servidor (no hace auto-login) ────────
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
@@ -217,48 +211,32 @@ export default function RegisterPage() {
 
     setLoading(true);
     try {
-      // 1. Crear usuario en Supabase Auth (email confirmado automáticamente — sistema interno)
-      const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-        email:         form.email.trim().toLowerCase(),
-        password:      form.password,
-        email_confirm: true,
-        user_metadata: { nombre: form.nombre.trim(), rol: form.rol },
+      // ✅ FIX: usar la API Route del servidor en vez de supabase.auth.admin.createUser
+      //    desde el cliente — lo que requería exponer el service_role key en el frontend.
+      const res = await fetch('/api/usuarios', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nombre:   form.nombre.trim(),
+          email:    form.email.trim().toLowerCase(),
+          password: form.password,
+          rol:      form.rol,
+          dni:      form.dni.trim() || null,
+        }),
       });
 
-      if (authError) throw authError;
-      if (!authData.user) throw new Error('No se pudo crear el usuario en Auth.');
+      const json = await res.json();
 
-      // 2. El trigger fn_crear_perfil_usuario ya insertó la fila en public.usuarios.
-      //    Actualizamos para asegurarnos de tener nombre, rol y dni correctos.
-      //    FIX: usar `db` (tipado relajado) — evita error ts(2345) en .update()
-      const { error: updateError } = await db
-        .from('usuarios')
-        .update({
-          nombre: form.nombre.trim(),
-          rol:    form.rol,
-          dni:    form.dni.trim() || null,
-        })
-        .eq('id', authData.user.id);
-
-      if (updateError) {
-        // No es fatal — el usuario ya fue creado en Auth correctamente.
-        console.warn('Advertencia al actualizar perfil:', updateError.message);
+      if (!res.ok) {
+        setError(json.error ?? 'Error al crear el usuario');
+        return;
       }
 
       setSuccess(true);
 
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Error desconocido';
-
-      if (msg.includes('already registered') || msg.includes('already been registered')) {
-        setError('Este correo ya está registrado en el sistema.');
-      } else if (msg.includes('invalid email')) {
-        setError('El correo electrónico no es válido.');
-      } else if (msg.includes('password')) {
-        setError('La contraseña no cumple los requisitos mínimos.');
-      } else {
-        setError(`Error al crear el usuario: ${msg}`);
-      }
+      setError(`Error al crear el usuario: ${msg}`);
     } finally {
       setLoading(false);
     }
@@ -337,7 +315,6 @@ export default function RegisterPage() {
       className="min-h-screen flex items-center justify-center p-4 relative overflow-hidden"
       style={{ background: `linear-gradient(135deg, ${B.charcoal} 0%, #1a2e24 50%, ${B.charcoal} 100%)` }}
     >
-      {/* Decoración de fondo — idéntica al login */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden">
         <div className="absolute -top-32 -left-32 w-96 h-96 rounded-full opacity-10"
           style={{ background: B.gold, filter: 'blur(80px)' }} />
@@ -347,12 +324,10 @@ export default function RegisterPage() {
           style={{ background: B.green, filter: 'blur(120px)' }} />
       </div>
 
-      {/* Card */}
       <div
         className="relative w-full max-w-md rounded-3xl p-8 shadow-2xl"
         style={{ background: B.white, boxShadow: '0 32px 80px rgba(0,0,0,0.4)' }}
       >
-        {/* Header */}
         <div className="flex flex-col items-center mb-5">
           <div className="rounded-2xl p-4 mb-2" style={{ background: B.charcoal }}>
             <Image
@@ -369,26 +344,14 @@ export default function RegisterPage() {
           </p>
         </div>
 
-        {/* Formulario */}
         <form onSubmit={handleSubmit} className="space-y-4">
 
           <Field label="Nombre completo">
-            <Input
-              value={form.nombre}
-              onChange={set('nombre')}
-              placeholder="Ej: María García"
-              disabled={loading}
-            />
+            <Input value={form.nombre} onChange={set('nombre')} placeholder="Ej: María García" disabled={loading} />
           </Field>
 
           <Field label="Correo electrónico">
-            <Input
-              type="email"
-              value={form.email}
-              onChange={set('email')}
-              placeholder="usuario@madre.com"
-              disabled={loading}
-            />
+            <Input type="email" value={form.email} onChange={set('email')} placeholder="usuario@madre.com" disabled={loading} />
           </Field>
 
           <Field label="DNI (opcional)">
@@ -401,11 +364,7 @@ export default function RegisterPage() {
           </Field>
 
           <Field label="Rol del usuario">
-            <RolSelect
-              value={form.rol}
-              onChange={v => setForm(f => ({ ...f, rol: v }))}
-              disabled={loading}
-            />
+            <RolSelect value={form.rol} onChange={v => setForm(f => ({ ...f, rol: v }))} disabled={loading} />
           </Field>
 
           <Field label="Contraseña">
@@ -416,14 +375,10 @@ export default function RegisterPage() {
               placeholder="Mínimo 6 caracteres"
               disabled={loading}
               right={
-                <button
-                  type="button"
-                  onClick={() => setShowPass(v => !v)}
-                  className="p-1 rounded-lg transition-colors"
-                  style={{ color: B.muted }}
+                <button type="button" onClick={() => setShowPass(v => !v)}
+                  className="p-1 rounded-lg transition-colors" style={{ color: B.muted }}
                   onMouseEnter={e => e.currentTarget.style.color = B.charcoal}
-                  onMouseLeave={e => e.currentTarget.style.color = B.muted}
-                >
+                  onMouseLeave={e => e.currentTarget.style.color = B.muted}>
                   {showPass ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               }
@@ -438,24 +393,17 @@ export default function RegisterPage() {
               placeholder="Repite la contraseña"
               disabled={loading}
               right={
-                <button
-                  type="button"
-                  onClick={() => setShowConfirm(v => !v)}
-                  className="p-1 rounded-lg transition-colors"
-                  style={{ color: B.muted }}
+                <button type="button" onClick={() => setShowConfirm(v => !v)}
+                  className="p-1 rounded-lg transition-colors" style={{ color: B.muted }}
                   onMouseEnter={e => e.currentTarget.style.color = B.charcoal}
-                  onMouseLeave={e => e.currentTarget.style.color = B.muted}
-                >
+                  onMouseLeave={e => e.currentTarget.style.color = B.muted}>
                   {showConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               }
             />
-            {/* Indicador de coincidencia en tiempo real */}
             {form.confirmPassword && (
-              <p
-                className="text-xs mt-1 flex items-center gap-1"
-                style={{ color: form.password === form.confirmPassword ? B.green : B.terra }}
-              >
+              <p className="text-xs mt-1 flex items-center gap-1"
+                style={{ color: form.password === form.confirmPassword ? B.green : B.terra }}>
                 {form.password === form.confirmPassword
                   ? <><Check className="w-3 h-3" /> Las contraseñas coinciden</>
                   : '✗ Las contraseñas no coinciden'
@@ -464,56 +412,32 @@ export default function RegisterPage() {
             )}
           </Field>
 
-          {/* Error */}
           {error && (
-            <div
-              className="px-4 py-3 rounded-xl text-sm font-medium"
-              style={{ background: '#fef0e6', color: B.terra, border: `1px solid ${B.terra}30` }}
-            >
+            <div className="px-4 py-3 rounded-xl text-sm font-medium"
+              style={{ background: '#fef0e6', color: B.terra, border: `1px solid ${B.terra}30` }}>
               {error}
             </div>
           )}
 
-          {/* Botones */}
           <div className="flex gap-3 pt-1">
-            <button
-              type="button"
-              onClick={() => router.push('/')}
-              disabled={loading}
+            <button type="button" onClick={() => router.push('/')} disabled={loading}
               className="flex-1 py-3.5 rounded-xl text-sm font-bold transition-all"
-              style={{
-                background: B.cream,
-                color:      B.charcoal,
-                border:     `2px solid ${B.creamDark}`,
-                cursor:     loading ? 'not-allowed' : 'pointer',
-              }}
+              style={{ background: B.cream, color: B.charcoal, border: `2px solid ${B.creamDark}`, cursor: loading ? 'not-allowed' : 'pointer' }}
               onMouseEnter={e => { if (!loading) e.currentTarget.style.background = B.creamDark; }}
-              onMouseLeave={e => { if (!loading) e.currentTarget.style.background = B.cream; }}
-            >
+              onMouseLeave={e => { if (!loading) e.currentTarget.style.background = B.cream; }}>
               Cancelar
             </button>
 
-            <button
-              type="submit"
-              disabled={loading}
+            <button type="submit" disabled={loading}
               className="flex-1 py-3.5 rounded-xl text-sm font-black tracking-wide transition-all flex items-center justify-center gap-2"
-              style={{
-                background: loading ? B.muted : B.charcoal,
-                color:      B.cream,
-                cursor:     loading ? 'not-allowed' : 'pointer',
-              }}
+              style={{ background: loading ? B.muted : B.charcoal, color: B.cream, cursor: loading ? 'not-allowed' : 'pointer' }}
               onMouseEnter={e => { if (!loading) e.currentTarget.style.background = B.charcoalLight; }}
-              onMouseLeave={e => { if (!loading) e.currentTarget.style.background = B.charcoal; }}
-            >
-              {loading
-                ? <><Loader2 className="w-4 h-4 animate-spin" /> Creando...</>
-                : 'Crear usuario'
-              }
+              onMouseLeave={e => { if (!loading) e.currentTarget.style.background = B.charcoal; }}>
+              {loading ? <><Loader2 className="w-4 h-4 animate-spin" /> Creando...</> : 'Crear usuario'}
             </button>
           </div>
         </form>
 
-        {/* Footer */}
         <div className="mt-5 text-center">
           <p className="text-xs" style={{ color: B.muted }}>
             El usuario podrá iniciar sesión inmediatamente con estas credenciales.
@@ -521,11 +445,7 @@ export default function RegisterPage() {
         </div>
       </div>
 
-      {/* Watermark */}
-      <div
-        className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs"
-        style={{ color: 'rgba(255,255,255,0.25)' }}
-      >
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 text-xs" style={{ color: 'rgba(255,255,255,0.25)' }}>
         Powered by Cloudnium · v1.0.0
       </div>
     </div>
