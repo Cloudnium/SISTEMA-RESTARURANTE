@@ -16,9 +16,11 @@ function getAdminClient() {
 
 export async function DELETE(
   _req: NextRequest,
+  // Next.js 15: params es una Promise — SIEMPRE hacer await antes de leer
   context: { params: Promise<{ id: string }> },
 ) {
-  const { id } = await context.params
+  const { id } = await context.params;
+
   if (!id) return NextResponse.json({ error: 'ID requerido' }, { status: 400 });
 
   try {

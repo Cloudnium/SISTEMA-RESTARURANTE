@@ -2,7 +2,7 @@
 'use client';
 
 import React, { useState, useMemo } from 'react';
-import { Search, Plus, Star, Users, Building2, UserCircle, Edit, Trash2, X, TrendingUp, Loader2 } from 'lucide-react';
+import { Search, Plus, Star, Users, Building2, UserCircle, Edit, Trash2, X, TrendingUp, Loader2, AlertTriangle } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Card, KpiCard, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
@@ -107,9 +107,10 @@ function ModalCliente({ cliente, onClose, onSaved }: {
 
 export default function ClientesView() {
   const { clientes, isLoading, refetchClientes } = useGlobalData();
-  const [busqueda,  setBusqueda]  = useState('');
-  const [tipoFiltro,setTipoFiltro]= useState<'todos' | TipoCliente>('todos');
-  const [modal,     setModal]     = useState<{ open: boolean; cliente: Cliente | null }>({ open: false, cliente: null });
+  const [busqueda,   setBusqueda]   = useState('');
+  const [tipoFiltro, setTipoFiltro] = useState<'todos' | TipoCliente>('todos');
+  const [modal,      setModal]      = useState<{ open: boolean; cliente: Cliente | null }>({ open: false, cliente: null });
+  const [elimError,  setElimError]  = useState('');
 
   const filtrados = useMemo(() => {
     const q = busqueda.toLowerCase();
@@ -121,9 +122,14 @@ export default function ClientesView() {
   }, [clientes, busqueda, tipoFiltro]);
 
   const handleEliminar = async (id: string) => {
-    if (!confirm('¿Desactivar este cliente?')) return;
-    await eliminarCliente(id);
-    refetchClientes();
+    if (!confirm('¿Desactivar este cliente? Podrá reactivarlo editándolo.')) return;
+    setElimError('');
+    try {
+      await eliminarCliente(id);
+      refetchClientes();
+    } catch (e) {
+      setElimError(e instanceof Error ? e.message : 'Error al desactivar el cliente');
+    }
   };
 
   if (isLoading) return (
@@ -141,11 +147,23 @@ export default function ClientesView() {
         action={<Btn onClick={() => setModal({ open: true, cliente: null })}><Plus className="w-4 h-4" />Nuevo Cliente</Btn>} />
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-        <KpiCard label="Total" value={clientes.length} icon={Users} color={B.charcoal} />
-        <KpiCard label="Personas" value={personas} icon={UserCircle} color={B.green} />
-        <KpiCard label="Empresas" value={empresas} icon={Building2} color={B.gold} />
-        <KpiCard label="Con Puntos" value={clientes.filter(c => c.puntos_acumulados > 0).length} icon={TrendingUp} color={B.terra} />
+        <KpiCard label="Total"      value={clientes.length}                                         icon={Users}      color={B.charcoal} />
+        <KpiCard label="Personas"   value={personas}                                                icon={UserCircle} color={B.green}    />
+        <KpiCard label="Empresas"   value={empresas}                                                icon={Building2}  color={B.gold}     />
+        <KpiCard label="Con Puntos" value={clientes.filter(c => c.puntos_acumulados > 0).length}   icon={TrendingUp} color={B.terra}    />
       </div>
+
+      {/* Error global de eliminación */}
+      {elimError && (
+        <div className="flex items-center gap-2 rounded-xl px-4 py-3 mb-4"
+          style={{ background: '#fef0e6', border: `1px solid ${B.terra}30` }}>
+          <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: B.terra }} />
+          <p className="text-sm" style={{ color: B.terra }}>{elimError}</p>
+          <button onClick={() => setElimError('')} className="ml-auto p-0.5 rounded" style={{ color: B.terra }}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <Card className="mb-4">
         <div className="flex flex-col sm:flex-row gap-3">
@@ -170,7 +188,7 @@ export default function ClientesView() {
         <table className="w-full">
           <thead>
             <tr style={{ background: B.cream }}>
-              {['Tipo','Nombre','DNI / RUC','Teléfono','Puntos','Fecha','Acciones'].map(h => (
+              {['Tipo', 'Nombre', 'DNI / RUC', 'Teléfono', 'Puntos', 'Fecha', 'Acciones'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-black uppercase tracking-widest" style={{ color: B.muted }}>{h}</th>
               ))}
             </tr>
@@ -210,13 +228,15 @@ export default function ClientesView() {
                     <button onClick={() => setModal({ open: true, cliente: c })}
                       className="p-1.5 rounded-lg" style={{ color: B.green }}
                       onMouseEnter={e => e.currentTarget.style.background = `${B.green}15`}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      title="Editar">
                       <Edit className="w-4 h-4" />
                     </button>
                     <button onClick={() => handleEliminar(c.id)}
                       className="p-1.5 rounded-lg" style={{ color: B.terra }}
                       onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
-                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      title="Desactivar">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   </div>
@@ -231,7 +251,8 @@ export default function ClientesView() {
       </div>
 
       {modal.open && (
-        <ModalCliente cliente={modal.cliente} onClose={() => setModal({ open: false, cliente: null })}
+        <ModalCliente cliente={modal.cliente}
+          onClose={() => setModal({ open: false, cliente: null })}
           onSaved={() => { setModal({ open: false, cliente: null }); refetchClientes(); }} />
       )}
     </div>

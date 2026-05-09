@@ -35,12 +35,13 @@ const ROL_CFG: Record<RolUsuario, { label: string; color: string; bg: string; ic
 };
 
 // ─── Modal Confirmar eliminación ──────────────────────────────────────────────
-function ModalConfirmarEliminar({ usuario, onClose, onDesactivar, onEliminar, loading }: {
-  usuario: Usuario;
+function ModalConfirmarEliminar({ usuario, onClose, onDesactivar, onEliminar, loading, errorMsg }: {
+  usuario:    Usuario;
   onClose:      () => void;
   onDesactivar: () => Promise<void>;
   onEliminar:   () => Promise<void>;
   loading:      boolean;
+  errorMsg:     string;
 }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -61,16 +62,18 @@ function ModalConfirmarEliminar({ usuario, onClose, onDesactivar, onEliminar, lo
             </div>
           </div>
 
-          <div className="space-y-2 mb-5">
+          <div className="space-y-2 mb-4">
             {/* Opción 1: Desactivar */}
-            <button onClick={onDesactivar} disabled={loading}
-              className="w-full text-left px-4 py-3 rounded-xl transition-all"
+            <button onClick={onDesactivar} disabled={loading || !usuario.activo}
+              className="w-full text-left px-4 py-3 rounded-xl transition-all disabled:opacity-40"
               style={{ background: `${B.gold}12`, border: `1px solid ${B.gold}30` }}
-              onMouseEnter={e => e.currentTarget.style.background = `${B.gold}20`}
+              onMouseEnter={e => { if (!loading && usuario.activo) e.currentTarget.style.background = `${B.gold}20`; }}
               onMouseLeave={e => e.currentTarget.style.background = `${B.gold}12`}>
-              <p className="text-sm font-bold" style={{ color: B.charcoal }}>Desactivar usuario</p>
+              <p className="text-sm font-bold" style={{ color: B.charcoal }}>
+                {usuario.activo ? 'Desactivar usuario' : 'Usuario ya inactivo'}
+              </p>
               <p className="text-xs mt-0.5" style={{ color: B.muted }}>
-                El usuario no podrá iniciar sesión pero sus datos se conservan. Reversible.
+                No podrá iniciar sesión. Sus datos se conservan. Reversible.
               </p>
             </button>
 
@@ -78,19 +81,26 @@ function ModalConfirmarEliminar({ usuario, onClose, onDesactivar, onEliminar, lo
             <button onClick={onEliminar} disabled={loading}
               className="w-full text-left px-4 py-3 rounded-xl transition-all"
               style={{ background: '#fef2f2', border: '1px solid #fecaca' }}
-              onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
+              onMouseEnter={e => { if (!loading) e.currentTarget.style.background = '#fee2e2'; }}
               onMouseLeave={e => e.currentTarget.style.background = '#fef2f2'}>
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm font-bold" style={{ color: B.terra }}>Eliminar permanentemente</p>
                   <p className="text-xs mt-0.5" style={{ color: B.muted }}>
-                    Elimina el usuario de Auth y la base de datos. Irreversible.
+                    Elimina de Auth y la base de datos. Irreversible.
                   </p>
                 </div>
                 {loading && <Loader2 className="w-4 h-4 animate-spin shrink-0 ml-2" style={{ color: B.terra }} />}
               </div>
             </button>
           </div>
+
+          {/* Error visible */}
+          {errorMsg && (
+            <div className="mb-3 px-3 py-2 rounded-xl text-xs" style={{ background: '#fef0e6', color: B.terra }}>
+              {errorMsg}
+            </div>
+          )}
 
           <button onClick={onClose} disabled={loading}
             className="w-full py-2.5 rounded-xl text-sm font-semibold"
@@ -199,7 +209,7 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Correo electrónico *</label>
             <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
-              placeholder="ana@madre.com" disabled={!esNuevo}
+              placeholder="ana@restaurante.com" disabled={!esNuevo}
               className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
               style={{ ...inp, opacity: !esNuevo ? 0.6 : 1 }} />
             {!esNuevo && <p className="text-[10px] mt-1" style={{ color: B.muted }}>El email no se puede cambiar</p>}
@@ -287,12 +297,13 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
 export function UsuariosView() {
   const { usuarios, cajas, isLoading, refetchUsuarios } = useGlobalData();
 
-  const [busqueda,  setBusqueda]  = useState('');
-  const [rolFiltro, setRolFiltro] = useState<RolFiltro>('todos');
-  const [estadoF,   setEstadoF]   = useState<EstadoFiltro>('todos');
-  const [modal,     setModal]     = useState<{ open: boolean; usuario: Usuario | null }>({ open: false, usuario: null });
-  const [modalElim, setModalElim] = useState<Usuario | null>(null);
+  const [busqueda,    setBusqueda]    = useState('');
+  const [rolFiltro,   setRolFiltro]   = useState<RolFiltro>('todos');
+  const [estadoF,     setEstadoF]     = useState<EstadoFiltro>('todos');
+  const [modal,       setModal]       = useState<{ open: boolean; usuario: Usuario | null }>({ open: false, usuario: null });
+  const [modalElim,   setModalElim]   = useState<Usuario | null>(null);
   const [elimLoading, setElimLoading] = useState(false);
+  const [elimError,   setElimError]   = useState('');
 
   const filtrados = useMemo(() => {
     const q = busqueda.toLowerCase();
@@ -304,34 +315,34 @@ export function UsuariosView() {
     });
   }, [usuarios, busqueda, rolFiltro, estadoF]);
 
-  // Desactivar — solo marca activo=false en la tabla, el usuario sigue en Auth
+  // Desactivar — solo marca activo=false en la tabla
   const handleDesactivar = async () => {
-    if (!modalElim) return;
-    setElimLoading(true);
+    if (!modalElim || !modalElim.activo) return;
+    setElimLoading(true); setElimError('');
     try {
-      await db.from('usuarios').update({ activo: false }).eq('id', modalElim.id);
+      const { error } = await db.from('usuarios').update({ activo: false }).eq('id', modalElim.id);
+      if (error) throw error;
       setModalElim(null);
       refetchUsuarios();
     } catch (e) {
-      console.error('Error al desactivar:', e);
+      setElimError(e instanceof Error ? e.message : 'Error al desactivar');
     } finally {
       setElimLoading(false);
     }
   };
 
-  // Eliminar permanente — llama a DELETE /api/usuarios/:id (usa service_role en el servidor)
+  // Eliminar permanente — DELETE /api/usuarios/:id con service_role
   const handleEliminarPermanente = async () => {
     if (!modalElim) return;
-    setElimLoading(true);
+    setElimLoading(true); setElimError('');
     try {
-      const res = await fetch(`/api/usuarios/${modalElim.id}`, { method: 'DELETE' });
+      const res  = await fetch(`/api/usuarios/${modalElim.id}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Error al eliminar');
       setModalElim(null);
       refetchUsuarios();
     } catch (e) {
-      console.error('Error al eliminar:', e);
-      alert(e instanceof Error ? e.message : 'Error al eliminar el usuario');
+      setElimError(e instanceof Error ? e.message : 'Error al eliminar el usuario');
     } finally {
       setElimLoading(false);
     }
@@ -433,6 +444,7 @@ export function UsuariosView() {
 
                   <td className="px-4 py-3 text-sm font-mono" style={{ color: B.charcoal }}>{u.dni ?? '-'}</td>
 
+                  {/* Caja — acceso limpio, sin cast raro */}
                   <td className="px-4 py-3 text-sm" style={{ color: B.charcoal }}>
                     {u.caja?.nombre ?? '-'}
                   </td>
@@ -453,7 +465,7 @@ export function UsuariosView() {
                         title="Editar">
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button onClick={() => setModalElim(u)}
+                      <button onClick={() => { setElimError(''); setModalElim(u); }}
                         className="p-1.5 rounded-lg" style={{ color: B.terra }}
                         onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
@@ -487,7 +499,8 @@ export function UsuariosView() {
         <ModalConfirmarEliminar
           usuario={modalElim}
           loading={elimLoading}
-          onClose={() => !elimLoading && setModalElim(null)}
+          errorMsg={elimError}
+          onClose={() => { if (!elimLoading) { setModalElim(null); setElimError(''); } }}
           onDesactivar={handleDesactivar}
           onEliminar={handleEliminarPermanente}
         />

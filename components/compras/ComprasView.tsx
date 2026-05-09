@@ -4,7 +4,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   Search, Plus, Edit, Trash2, X, TrendingUp, TrendingDown,
-  DollarSign, Loader2
+  DollarSign, Loader2, AlertTriangle,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Card, KpiCard, Btn } from '@/components/ui';
@@ -82,14 +82,35 @@ function ModalBase({ title, onClose, children, actions }: {
   );
 }
 
-// ─── Modal Nueva Compra (formulario con items del segundo archivo) ─────────────
-function ModalNuevaCompra({ onClose, onSaved, compraEditar }: {
+// ─── Modal Nueva / Editar Compra ──────────────────────────────────────────────
+function ModalCompra({ onClose, onSaved, compraEditar }: {
   onClose: () => void;
   onSaved: () => void;
   compraEditar?: Compra | null;
 }) {
   const { usuario } = useAuth();
-  const [form,    setForm]    = useState<FormState>(FORM_VACIO);
+
+  // Si viene compra a editar, pre-rellenar el form con sus datos
+  const [form, setForm] = useState<FormState>(() => {
+    if (!compraEditar) return FORM_VACIO;
+    return {
+      tipo_comprobante: compraEditar.tipo_comprobante,
+      serie:            compraEditar.serie ?? '',
+      numero:           compraEditar.numero ?? '',
+      fecha_emision:    compraEditar.fecha_emision,
+      proveedor_nombre: compraEditar.proveedor_nombre,
+      proveedor_doc:    compraEditar.proveedor_doc ?? '',
+      descripcion:      compraEditar.descripcion ?? '',
+      igv_incluido:     true,
+      items: compraEditar.items?.map(i => ({
+        descripcion:     i.descripcion,
+        cantidad:        String(i.cantidad),
+        precio_unitario: String(i.precio_unitario),
+        zona_destino:    i.zona_destino,
+      })) ?? [{ descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'cocina' }],
+    };
+  });
+
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -168,7 +189,7 @@ function ModalNuevaCompra({ onClose, onSaved, compraEditar }: {
           className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
           style={{ background: B.green, color: B.cream }}>
           {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-          Registrar compra
+          {compraEditar ? 'Guardar cambios' : 'Registrar compra'}
         </button>
       </>}>
       <div className="space-y-4">
@@ -215,7 +236,7 @@ function ModalNuevaCompra({ onClose, onSaved, compraEditar }: {
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Proveedor *</label>
             <input type="text" value={form.proveedor_nombre}
               onChange={e => setForm(f => ({ ...f, proveedor_nombre: e.target.value }))}
-              placeholder="SODALES DISTRIBUIDORES S.A.C." className={inputCls()} style={INP} />
+              placeholder="Distribuidora S.A.C." className={inputCls()} style={INP} />
           </div>
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>RUC / DNI</label>
@@ -310,10 +331,12 @@ function ModalNuevaCompra({ onClose, onSaved, compraEditar }: {
 // VISTA PRINCIPAL
 // ════════════════════════════════════════════════════════════════════════════
 export function ComprasView() {
-  const { compras, isLoading, refetchCompras, usuarioActual, metricas } = useGlobalData();
-  const [busqueda, setBusqueda] = useState('');
-  const [tipoFiltro, setTipoFiltro] = useState<'todos' | TipoComprobanteCompra>('todos');
-  const [modal, setModal] = useState(false);
+  const { compras, isLoading, refetchCompras, metricas } = useGlobalData();
+  const [busqueda,    setBusqueda]    = useState('');
+  const [tipoFiltro,  setTipoFiltro]  = useState<'todos' | TipoComprobanteCompra>('todos');
+  // null = cerrado, undefined = nueva, Compra = editar
+  const [modal,      setModal]       = useState<null | undefined | Compra>(null);
+  const [elimError,  setElimError]   = useState('');
 
   const filtrados = useMemo(() => {
     const q = busqueda.toLowerCase();
@@ -333,9 +356,14 @@ export function ComprasView() {
   const promedio        = compras.length > 0 ? totalRegistrado / compras.length : 0;
 
   const handleEliminar = async (id: string) => {
-    if (!confirm('¿Eliminar esta compra?')) return;
-    await eliminarCompra(id);
-    refetchCompras();
+    if (!confirm('¿Eliminar esta compra? Esta acción no se puede deshacer.')) return;
+    setElimError('');
+    try {
+      await eliminarCompra(id);
+      refetchCompras();
+    } catch (e) {
+      setElimError(e instanceof Error ? e.message : 'Error al eliminar la compra');
+    }
   };
 
   if (isLoading) return (
@@ -348,16 +376,16 @@ export function ComprasView() {
     <div>
       <PageHeader
         title="Compras"
-        subtitle={`Registro de comprobantes de compra a proveedores · Total: ${compras.length} comprobantes`}
-        action={<Btn onClick={() => setModal(true)}><Plus className="w-4 h-4" />Nueva compra</Btn>}
+        subtitle={`Registro de comprobantes de compra · Total: ${compras.length} comprobantes`}
+        action={<Btn onClick={() => setModal(undefined)}><Plus className="w-4 h-4" />Nueva compra</Btn>}
       />
 
       {/* Métricas */}
       <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-5">
-        <KpiCard label="Ventas de Hoy"   value={`S/ ${(metricas?.ventasHoy ?? 0).toFixed(2)}`}    sub="Ingresos"     icon={TrendingUp}   color={B.green} />
-        <KpiCard label="Ventas del Mes"  value={`S/ ${(metricas?.ventasHoy ?? 0).toFixed(2)}`}    sub="Ingresos mes" icon={DollarSign}   color={B.green} />
-        <KpiCard label="Compras del Mes" value={`S/ ${totalRegistrado.toFixed(2)}`}               sub="Egresos"      icon={TrendingDown} color={B.terra} />
-        <KpiCard label="Diferencia Mes"  value={`S/ ${((metricas?.ventasHoy ?? 0) - totalRegistrado).toFixed(2)}`}  icon={DollarSign}   color={B.gold} />
+        <KpiCard label="Ventas de Hoy"   value={`S/ ${(metricas?.ventasHoy ?? 0).toFixed(2)}`}                              sub="Ingresos"     icon={TrendingUp}   color={B.green} />
+        <KpiCard label="Ventas del Mes"  value={`S/ ${(metricas?.ventasHoy ?? 0).toFixed(2)}`}                              sub="Ingresos mes" icon={DollarSign}   color={B.green} />
+        <KpiCard label="Compras del Mes" value={`S/ ${totalRegistrado.toFixed(2)}`}                                         sub="Egresos"      icon={TrendingDown} color={B.terra} />
+        <KpiCard label="Diferencia Mes"  value={`S/ ${((metricas?.ventasHoy ?? 0) - totalRegistrado).toFixed(2)}`}          icon={DollarSign}  color={B.gold} />
         <div className="rounded-2xl p-4" style={{ background: B.white, border: `1px solid ${B.cream}` }}>
           <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: B.muted }}>Total registrado</p>
           <p className="text-lg font-black mt-0.5" style={{ color: B.terra }}>S/ {totalRegistrado.toFixed(2)}</p>
@@ -366,6 +394,18 @@ export function ComprasView() {
           </p>
         </div>
       </div>
+
+      {/* Error de eliminación */}
+      {elimError && (
+        <div className="flex items-center gap-2 rounded-xl px-4 py-3 mb-4"
+          style={{ background: '#fef0e6', border: `1px solid ${B.terra}30` }}>
+          <AlertTriangle className="w-4 h-4 shrink-0" style={{ color: B.terra }} />
+          <p className="text-sm" style={{ color: B.terra }}>{elimError}</p>
+          <button onClick={() => setElimError('')} className="ml-auto p-0.5 rounded" style={{ color: B.terra }}>
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       {/* Filtro */}
       <Card className="mb-4">
@@ -400,8 +440,8 @@ export function ComprasView() {
           </thead>
           <tbody>
             {filtrados.map(c => {
-              const comprobante = [c.serie, c.numero].filter(Boolean).join('-') || '—';
-              const fecha = new Date(c.fecha_emision + 'T00:00:00')
+              const comprobante   = [c.serie, c.numero].filter(Boolean).join('-') || '—';
+              const fecha         = new Date(c.fecha_emision + 'T00:00:00')
                 .toLocaleDateString('es-PE', { day: '2-digit', month: '2-digit', year: 'numeric' });
               const registradoPor = (c.usuario as { nombre?: string } | undefined)?.nombre ?? '—';
 
@@ -427,15 +467,19 @@ export function ComprasView() {
                   <td className="px-4 py-3 text-sm" style={{ color: B.charcoal }}>{registradoPor}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
-                      <button className="p-1.5 rounded-lg" style={{ color: B.green }}
+                      {/* Editar — ahora abre el modal con la compra cargada */}
+                      <button onClick={() => setModal(c)}
+                        className="p-1.5 rounded-lg" style={{ color: B.green }}
                         onMouseEnter={e => e.currentTarget.style.background = `${B.green}15`}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        title="Editar">
                         <Edit className="w-4 h-4" />
                       </button>
                       <button onClick={() => handleEliminar(c.id)}
                         className="p-1.5 rounded-lg" style={{ color: B.terra }}
                         onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
-                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                        onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                        title="Eliminar">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -452,10 +496,12 @@ export function ComprasView() {
         )}
       </div>
 
-      {modal && (
-        <ModalNuevaCompra
-          onClose={() => setModal(false)}
-          onSaved={() => { setModal(false); refetchCompras(); }}
+      {/* Modal nueva / editar (null = cerrado) */}
+      {modal !== null && (
+        <ModalCompra
+          compraEditar={modal as Compra | undefined}
+          onClose={() => setModal(null)}
+          onSaved={() => { setModal(null); refetchCompras(); }}
         />
       )}
     </div>
