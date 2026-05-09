@@ -592,11 +592,9 @@ export async function registrarProduccion(
 // ════════════════════════════════════════════════════════════════════════════
 
 export async function getUsuarios(): Promise<Usuario[]> {
-  // FIX #6 (runtime PGRST201): especificar FK explícita para resolver ambigüedad
-  // entre usuarios→cajas. Hint de Supabase: 'cajas!fk_usuarios_caja'
   const { data, error } = await supabase
     .from('usuarios')
-    .select('*, caja:cajas!fk_usuarios_caja(nombre)')
+    .select('*, caja:cajas!fk_usuarios_caja(id, nombre)')
     .order('nombre');
   if (error) throw error;
   return (data as Usuario[]) ?? [];

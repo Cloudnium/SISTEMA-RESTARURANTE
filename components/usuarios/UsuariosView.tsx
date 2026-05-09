@@ -1,10 +1,10 @@
-// componentes/usuarios/UsuariosView.tsx
+// components/usuarios/UsuariosView.tsx
 'use client';
 
 import React, { useState, useMemo } from 'react';
 import {
   Search, Plus, Edit, Trash2, Loader2, X,
-  UserCircle, Shield, CreditCard, ChefHat,
+  UserCircle, Shield, CreditCard, ChefHat, AlertTriangle,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Card, KpiCard, Btn } from '@/components/ui';
@@ -15,18 +15,12 @@ import type { Usuario, RolUsuario } from '@/lib/supabase/types';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
 
-// ─── Tipos ────────────────────────────────────────────────────────────────────
 type EstadoFiltro = 'todos' | 'activo' | 'inactivo';
 type RolFiltro   = 'todos' | RolUsuario;
 
 interface FormState {
-  nombre:   string;
-  email:    string;
-  password: string;
-  rol:      RolUsuario;
-  dni:      string;
-  caja_id:  string;
-  activo:   boolean;
+  nombre: string; email: string; password: string;
+  rol: RolUsuario; dni: string; caja_id: string; activo: boolean;
 }
 
 const FORM_VACIO: FormState = {
@@ -34,14 +28,82 @@ const FORM_VACIO: FormState = {
   dni: '', caja_id: '', activo: true,
 };
 
-// ─── Config visual por rol ────────────────────────────────────────────────────
 const ROL_CFG: Record<RolUsuario, { label: string; color: string; bg: string; icon: React.ReactNode }> = {
   admin:    { label: 'Administrador', color: B.gold,  bg: `${B.gold}18`,  icon: <Shield     className="w-4 h-4" /> },
   cajero:   { label: 'Cajero',        color: B.green, bg: `${B.green}18`, icon: <CreditCard className="w-4 h-4" /> },
   cocinero: { label: 'Cocinero',      color: B.terra, bg: `${B.terra}18`, icon: <ChefHat    className="w-4 h-4" /> },
 };
 
-// ─── Modal Usuario ────────────────────────────────────────────────────────────
+// ─── Modal Confirmar eliminación ──────────────────────────────────────────────
+function ModalConfirmarEliminar({ usuario, onClose, onDesactivar, onEliminar, loading }: {
+  usuario: Usuario;
+  onClose:      () => void;
+  onDesactivar: () => Promise<void>;
+  onEliminar:   () => Promise<void>;
+  loading:      boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.75)', backdropFilter: 'blur(4px)' }}
+      onClick={!loading ? onClose : undefined}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }}
+        onClick={e => e.stopPropagation()}>
+
+        <div className="p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+              style={{ background: '#fee2e2' }}>
+              <AlertTriangle className="w-5 h-5" style={{ color: B.terra }} />
+            </div>
+            <div>
+              <h2 className="text-base font-bold" style={{ color: B.charcoal }}>¿Qué deseas hacer?</h2>
+              <p className="text-xs mt-0.5" style={{ color: B.muted }}>{usuario.nombre} · {usuario.email}</p>
+            </div>
+          </div>
+
+          <div className="space-y-2 mb-5">
+            {/* Opción 1: Desactivar */}
+            <button onClick={onDesactivar} disabled={loading}
+              className="w-full text-left px-4 py-3 rounded-xl transition-all"
+              style={{ background: `${B.gold}12`, border: `1px solid ${B.gold}30` }}
+              onMouseEnter={e => e.currentTarget.style.background = `${B.gold}20`}
+              onMouseLeave={e => e.currentTarget.style.background = `${B.gold}12`}>
+              <p className="text-sm font-bold" style={{ color: B.charcoal }}>Desactivar usuario</p>
+              <p className="text-xs mt-0.5" style={{ color: B.muted }}>
+                El usuario no podrá iniciar sesión pero sus datos se conservan. Reversible.
+              </p>
+            </button>
+
+            {/* Opción 2: Eliminar permanente */}
+            <button onClick={onEliminar} disabled={loading}
+              className="w-full text-left px-4 py-3 rounded-xl transition-all"
+              style={{ background: '#fef2f2', border: '1px solid #fecaca' }}
+              onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
+              onMouseLeave={e => e.currentTarget.style.background = '#fef2f2'}>
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-bold" style={{ color: B.terra }}>Eliminar permanentemente</p>
+                  <p className="text-xs mt-0.5" style={{ color: B.muted }}>
+                    Elimina el usuario de Auth y la base de datos. Irreversible.
+                  </p>
+                </div>
+                {loading && <Loader2 className="w-4 h-4 animate-spin shrink-0 ml-2" style={{ color: B.terra }} />}
+              </div>
+            </button>
+          </div>
+
+          <button onClick={onClose} disabled={loading}
+            className="w-full py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>
+            Cancelar
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal Usuario (crear / editar) ──────────────────────────────────────────
 function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
   usuario: Usuario | null;
   cajas:   Array<{ id: string; nombre: string }>;
@@ -53,8 +115,7 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
     ? { nombre: usuario.nombre, email: usuario.email, password: '',
         rol: usuario.rol, dni: usuario.dni ?? '', caja_id: usuario.caja_id ?? '',
         activo: usuario.activo }
-    : FORM_VACIO
-  );
+    : FORM_VACIO);
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -63,57 +124,38 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
   };
 
   const handleGuardar = async () => {
-    if (!form.nombre.trim())           { setError('El nombre es obligatorio'); return; }
-    if (!form.email.trim())            { setError('El email es obligatorio'); return; }
-    if (esNuevo && !form.password)     { setError('La contraseña es obligatoria para usuarios nuevos'); return; }
-    if (esNuevo && form.password.length < 6) { setError('La contraseña debe tener al menos 6 caracteres'); return; }
+    if (!form.nombre.trim())                    { setError('El nombre es obligatorio'); return; }
+    if (!form.email.trim())                     { setError('El email es obligatorio'); return; }
+    if (esNuevo && !form.password)              { setError('La contraseña es obligatoria'); return; }
+    if (esNuevo && form.password.length < 6)   { setError('La contraseña debe tener al menos 6 caracteres'); return; }
+    if (!esNuevo && form.password && form.password.length < 6) {
+      setError('La contraseña debe tener al menos 6 caracteres'); return;
+    }
 
     setLoading(true); setError('');
-
     try {
       if (esNuevo) {
-        // ✅ FIX: Llamar a la API Route del servidor en vez de signUp directo.
-        //    Esto evita que Supabase haga auto-login con el nuevo usuario y desloguee al admin.
         const res = await fetch('/api/usuarios', {
-          method:  'POST',
+          method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            nombre:   form.nombre,
-            email:    form.email,
-            password: form.password,
-            rol:      form.rol,
-            dni:      form.dni     || null,
-            caja_id:  form.caja_id || null,
-            activo:   form.activo,
+            nombre: form.nombre, email: form.email, password: form.password,
+            rol: form.rol, dni: form.dni || null, caja_id: form.caja_id || null, activo: form.activo,
           }),
         });
-
         const json = await res.json();
         if (!res.ok) throw new Error(json.error ?? 'Error al crear el usuario');
 
       } else {
-        // Actualizar perfil existente (nombre, rol, dni, caja, activo)
-        const { error: profileErr } = await db
-          .from('usuarios')
-          .update({
-            nombre:  form.nombre,
-            rol:     form.rol,
-            dni:     form.dni     || null,
-            caja_id: form.caja_id || null,
-            activo:  form.activo,
-          })
-          .eq('id', usuario!.id);
+        const { error: profileErr } = await db.from('usuarios').update({
+          nombre: form.nombre, rol: form.rol,
+          dni: form.dni || null, caja_id: form.caja_id || null, activo: form.activo,
+        }).eq('id', usuario!.id);
         if (profileErr) throw profileErr;
 
-        // ✅ FIX: Cambiar contraseña de otro usuario también via API Route (usa service_role)
         if (form.password) {
-          if (form.password.length < 6) {
-            setError('La contraseña debe tener al menos 6 caracteres');
-            setLoading(false);
-            return;
-          }
           const res = await fetch('/api/usuarios', {
-            method:  'PATCH',
+            method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ userId: usuario!.id, password: form.password }),
           });
@@ -121,11 +163,9 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
           if (!res.ok) throw new Error(json.error ?? 'Error al cambiar la contraseña');
         }
       }
-
       onSaved();
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Error desconocido';
-      setError(msg);
+      setError(e instanceof Error ? e.message : 'Error desconocido');
     } finally {
       setLoading(false);
     }
@@ -136,7 +176,6 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
       style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
       <div className="rounded-2xl w-full max-w-md shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
 
-        {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: B.cream }}>
           <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
             {esNuevo ? 'Nuevo Usuario' : `Editar · ${usuario?.nombre}`}
@@ -152,43 +191,28 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
           {/* Nombre */}
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre completo *</label>
-            <input type="text" value={form.nombre}
-              onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
-              placeholder="Chef Ana García"
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+            <input type="text" value={form.nombre} onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
+              placeholder="Chef Ana García" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
           </div>
 
           {/* Email */}
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>
-              Correo electrónico *
-            </label>
-            <input type="email" value={form.email}
-              onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Correo electrónico *</label>
+            <input type="email" value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
               placeholder="ana@madre.com" disabled={!esNuevo}
               className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
               style={{ ...inp, opacity: !esNuevo ? 0.6 : 1 }} />
-            {!esNuevo && (
-              <p className="text-[10px] mt-1" style={{ color: B.muted }}>
-                El email no se puede cambiar una vez creado
-              </p>
-            )}
+            {!esNuevo && <p className="text-[10px] mt-1" style={{ color: B.muted }}>El email no se puede cambiar</p>}
           </div>
 
           {/* Contraseña */}
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>
-              Contraseña {!esNuevo && '(dejar en blanco para no cambiar)'}
+              Contraseña {!esNuevo && '(dejar vacío para no cambiar)'}
             </label>
-            <input type="password" value={form.password}
-              onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
+            <input type="password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))}
               placeholder={esNuevo ? 'Mínimo 6 caracteres' : '••••••••'}
               className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
-            {!esNuevo && (
-              <p className="text-[10px] mt-1" style={{ color: B.muted }}>
-                Ingresa una contraseña nueva si deseas cambiarla
-              </p>
-            )}
           </div>
 
           {/* Rol */}
@@ -200,10 +224,8 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
                   className="flex flex-col items-center gap-1.5 py-3 rounded-xl text-xs font-bold transition-all"
                   style={form.rol === key
                     ? { background: cfg.color, color: B.cream, boxShadow: `0 2px 8px ${cfg.color}40` }
-                    : { background: B.cream, color: B.charcoal }
-                  }>
-                  {cfg.icon}
-                  {cfg.label}
+                    : { background: B.cream, color: B.charcoal }}>
+                  {cfg.icon} {cfg.label}
                 </button>
               ))}
             </div>
@@ -213,15 +235,12 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>DNI</label>
-              <input type="text" value={form.dni}
-                onChange={e => setForm(f => ({ ...f, dni: e.target.value }))}
-                placeholder="12345678"
-                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+              <input type="text" value={form.dni} onChange={e => setForm(f => ({ ...f, dni: e.target.value }))}
+                placeholder="12345678" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
             </div>
             <div>
               <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Caja asignada</label>
-              <select value={form.caja_id}
-                onChange={e => setForm(f => ({ ...f, caja_id: e.target.value }))}
+              <select value={form.caja_id} onChange={e => setForm(f => ({ ...f, caja_id: e.target.value }))}
                 className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
                 <option value="">Sin caja</option>
                 {cajas.map(c => <option key={c.id} value={c.id}>{c.nombre}</option>)}
@@ -229,10 +248,9 @@ function ModalUsuario({ usuario, cajas, onClose, onSaved }: {
             </div>
           </div>
 
-          {/* Estado */}
+          {/* Activo toggle */}
           <div className="flex items-center gap-3 py-1">
-            <button
-              onClick={() => setForm(f => ({ ...f, activo: !f.activo }))}
+            <button onClick={() => setForm(f => ({ ...f, activo: !f.activo }))}
               className="w-10 h-6 rounded-full transition-all relative shrink-0"
               style={{ background: form.activo ? B.green : B.muted }}>
               <div className="absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all"
@@ -272,9 +290,9 @@ export function UsuariosView() {
   const [busqueda,  setBusqueda]  = useState('');
   const [rolFiltro, setRolFiltro] = useState<RolFiltro>('todos');
   const [estadoF,   setEstadoF]   = useState<EstadoFiltro>('todos');
-  const [modal, setModal] = useState<{ open: boolean; usuario: Usuario | null }>({
-    open: false, usuario: null,
-  });
+  const [modal,     setModal]     = useState<{ open: boolean; usuario: Usuario | null }>({ open: false, usuario: null });
+  const [modalElim, setModalElim] = useState<Usuario | null>(null);
+  const [elimLoading, setElimLoading] = useState(false);
 
   const filtrados = useMemo(() => {
     const q = busqueda.toLowerCase();
@@ -286,10 +304,37 @@ export function UsuariosView() {
     });
   }, [usuarios, busqueda, rolFiltro, estadoF]);
 
-  const handleEliminar = async (u: Usuario) => {
-    if (!confirm(`¿Desactivar a ${u.nombre}? No se eliminará de Auth.`)) return;
-    await supabase.from('usuarios').update({ activo: false }).eq('id', u.id);
-    refetchUsuarios();
+  // Desactivar — solo marca activo=false en la tabla, el usuario sigue en Auth
+  const handleDesactivar = async () => {
+    if (!modalElim) return;
+    setElimLoading(true);
+    try {
+      await db.from('usuarios').update({ activo: false }).eq('id', modalElim.id);
+      setModalElim(null);
+      refetchUsuarios();
+    } catch (e) {
+      console.error('Error al desactivar:', e);
+    } finally {
+      setElimLoading(false);
+    }
+  };
+
+  // Eliminar permanente — llama a DELETE /api/usuarios/:id (usa service_role en el servidor)
+  const handleEliminarPermanente = async () => {
+    if (!modalElim) return;
+    setElimLoading(true);
+    try {
+      const res = await fetch(`/api/usuarios/${modalElim.id}`, { method: 'DELETE' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error ?? 'Error al eliminar');
+      setModalElim(null);
+      refetchUsuarios();
+    } catch (e) {
+      console.error('Error al eliminar:', e);
+      alert(e instanceof Error ? e.message : 'Error al eliminar el usuario');
+    } finally {
+      setElimLoading(false);
+    }
   };
 
   const cajasList = cajas.map(c => ({ id: c.id, nombre: c.nombre }));
@@ -315,13 +360,8 @@ export function UsuariosView() {
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4 mb-5">
         {(Object.entries(ROL_CFG) as [RolUsuario, typeof ROL_CFG[RolUsuario]][]).map(([rol, cfg]) => (
-          <KpiCard
-            key={rol}
-            label={cfg.label}
-            value={usuarios.filter(u => u.rol === rol).length}
-            icon={rol === 'admin' ? Shield : rol === 'cajero' ? CreditCard : ChefHat}
-            color={cfg.color}
-          />
+          <KpiCard key={rol} label={cfg.label} value={usuarios.filter(u => u.rol === rol).length}
+            icon={rol === 'admin' ? Shield : rol === 'cajero' ? CreditCard : ChefHat} color={cfg.color} />
         ))}
       </div>
 
@@ -391,20 +431,15 @@ export function UsuariosView() {
                     </span>
                   </td>
 
-                  <td className="px-4 py-3 text-sm font-mono" style={{ color: B.charcoal }}>
-                    {u.dni ?? '-'}
-                  </td>
+                  <td className="px-4 py-3 text-sm font-mono" style={{ color: B.charcoal }}>{u.dni ?? '-'}</td>
 
                   <td className="px-4 py-3 text-sm" style={{ color: B.charcoal }}>
-                    {(u as Usuario & { caja?: { nombre: string } | null }).caja?.nombre ?? '-'}
+                    {u.caja?.nombre ?? '-'}
                   </td>
 
                   <td className="px-4 py-3">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={u.activo
-                        ? { background: '#e8f5e2', color: B.green }
-                        : { background: '#fee2e2', color: B.terra }
-                      }>
+                      style={u.activo ? { background: '#e8f5e2', color: B.green } : { background: '#fee2e2', color: B.terra }}>
                       {u.activo ? 'Activo' : 'Inactivo'}
                     </span>
                   </td>
@@ -412,17 +447,17 @@ export function UsuariosView() {
                   <td className="px-4 py-3">
                     <div className="flex gap-1">
                       <button onClick={() => setModal({ open: true, usuario: u })}
-                        className="p-1.5 rounded-lg transition-colors" style={{ color: B.green }}
+                        className="p-1.5 rounded-lg" style={{ color: B.green }}
                         onMouseEnter={e => e.currentTarget.style.background = `${B.green}15`}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                         title="Editar">
                         <Edit className="w-4 h-4" />
                       </button>
-                      <button onClick={() => handleEliminar(u)}
-                        className="p-1.5 rounded-lg transition-colors" style={{ color: B.terra }}
+                      <button onClick={() => setModalElim(u)}
+                        className="p-1.5 rounded-lg" style={{ color: B.terra }}
                         onMouseEnter={e => e.currentTarget.style.background = '#fee2e2'}
                         onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
-                        title="Desactivar">
+                        title="Eliminar / Desactivar">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
@@ -440,13 +475,21 @@ export function UsuariosView() {
         )}
       </div>
 
-      {/* Modal */}
+      {/* Modal editar/crear */}
       {modal.open && (
-        <ModalUsuario
-          usuario={modal.usuario}
-          cajas={cajasList}
+        <ModalUsuario usuario={modal.usuario} cajas={cajasList}
           onClose={() => setModal({ open: false, usuario: null })}
-          onSaved={() => { setModal({ open: false, usuario: null }); refetchUsuarios(); }}
+          onSaved={() => { setModal({ open: false, usuario: null }); refetchUsuarios(); }} />
+      )}
+
+      {/* Modal confirmar eliminación */}
+      {modalElim && (
+        <ModalConfirmarEliminar
+          usuario={modalElim}
+          loading={elimLoading}
+          onClose={() => !elimLoading && setModalElim(null)}
+          onDesactivar={handleDesactivar}
+          onEliminar={handleEliminarPermanente}
         />
       )}
     </div>

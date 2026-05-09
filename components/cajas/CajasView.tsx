@@ -9,16 +9,14 @@ import { B } from '@/lib/brand';
 import { PageHeader, KpiCard, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { abrirCaja, cerrarCaja, crearCaja, getMovimientosCaja } from '@/lib/supabase/queries';
+import { abrirCaja, cerrarCaja, crearCaja, getMovimientosCaja, registrarEgresoCaja } from '@/lib/supabase/queries';
 import { supabase } from '@/lib/supabase/client';
 import type { Caja, MovimientoCaja } from '@/lib/supabase/types';
 
 // ─── Modal Apertura ───────────────────────────────────────────────────────────
-function ModalApertura({ caja, onClose, onSaved }: {
-  caja: Caja; onClose: () => void; onSaved: () => void;
-}) {
-  const { usuario }       = useAuth();
-  const [monto, setMonto] = useState('');
+function ModalApertura({ caja, onClose, onSaved }: { caja: Caja; onClose: () => void; onSaved: () => void }) {
+  const { usuario }           = useAuth();
+  const [monto,   setMonto]   = useState('');
   const [loading, setLoading] = useState(false);
   const [error,   setError]   = useState('');
 
@@ -28,11 +26,8 @@ function ModalApertura({ caja, onClose, onSaved }: {
     try {
       await abrirCaja(caja.id, usuario.id, parseFloat(monto) || 0);
       onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al abrir caja');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Error al abrir caja'); }
+    finally { setLoading(false); }
   };
 
   return (
@@ -44,11 +39,8 @@ function ModalApertura({ caja, onClose, onSaved }: {
         </div>
         <div className="p-6 space-y-4">
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>
-              Monto inicial (S/)
-            </label>
-            <input type="number" min="0" step="0.01" value={monto}
-              onChange={e => setMonto(e.target.value)}
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Monto inicial (S/)</label>
+            <input type="number" min="0" step="0.01" value={monto} onChange={e => setMonto(e.target.value)}
               placeholder="0.00" autoFocus
               className="w-full px-4 py-3 rounded-xl text-lg font-bold outline-none"
               style={{ background: B.cream, border: `2px solid ${B.creamDark}`, color: B.charcoal }}
@@ -73,13 +65,11 @@ function ModalApertura({ caja, onClose, onSaved }: {
 }
 
 // ─── Modal Cierre ─────────────────────────────────────────────────────────────
-function ModalCierre({ caja, onClose, onSaved }: {
-  caja: Caja; onClose: () => void; onSaved: () => void;
-}) {
-  const { usuario }           = useAuth();
-  const [loading, setLoading] = useState(false);
-  const [saldoFinal, setSaldoFinal] = useState<number | null>(null);
-  const [error,   setError]   = useState('');
+function ModalCierre({ caja, onClose, onSaved }: { caja: Caja; onClose: () => void; onSaved: () => void }) {
+  const { usuario }                   = useAuth();
+  const [loading,    setLoading]      = useState(false);
+  const [saldoFinal, setSaldoFinal]   = useState<number | null>(null);
+  const [error,      setError]        = useState('');
 
   const handleCerrar = async () => {
     if (!usuario) return;
@@ -119,9 +109,7 @@ function ModalCierre({ caja, onClose, onSaved }: {
                   <span className="font-bold" style={{ color: B.charcoal }}>S/ {caja.monto_actual.toFixed(2)}</span>
                 </div>
               </div>
-              <p className="text-sm text-center mb-4" style={{ color: B.muted }}>
-                ¿Confirmas el cierre de esta caja?
-              </p>
+              <p className="text-sm text-center mb-4" style={{ color: B.muted }}>¿Confirmas el cierre de esta caja?</p>
               {error && <p className="text-xs px-3 py-2 rounded-xl mb-3" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
               <div className="flex gap-3">
                 <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
@@ -169,9 +157,7 @@ function ModalReporte({ caja, onClose }: { caja: Caja; onClose: () => void }) {
             <X className="w-5 h-5" />
           </button>
         </div>
-
         <div className="p-6 overflow-y-auto flex-1">
-          {/* Resumen */}
           <div className="grid grid-cols-3 gap-3 mb-5">
             {[
               { label: 'Saldo inicial', value: caja.monto_inicial, color: B.charcoal },
@@ -180,41 +166,33 @@ function ModalReporte({ caja, onClose }: { caja: Caja; onClose: () => void }) {
             ].map(s => (
               <div key={s.label} className="rounded-xl p-3 text-center" style={{ background: B.cream }}>
                 <p className="text-xs" style={{ color: B.muted }}>{s.label}</p>
-                <p className="text-lg font-black mt-0.5" style={{ color: s.color }}>
-                  S/ {s.value.toFixed(2)}
-                </p>
+                <p className="text-lg font-black mt-0.5" style={{ color: s.color }}>S/ {s.value.toFixed(2)}</p>
               </div>
             ))}
           </div>
-
-          <div className="rounded-xl p-3 mb-5 text-center" style={{ background: `${B.green}12`, border: `1px solid ${B.green}30` }}>
+          <div className="rounded-xl p-3 mb-5 text-center"
+            style={{ background: `${B.green}12`, border: `1px solid ${B.green}30` }}>
             <p className="text-xs" style={{ color: B.green }}>Saldo actual</p>
             <p className="text-2xl font-black" style={{ color: B.green }}>S/ {caja.monto_actual.toFixed(2)}</p>
           </div>
-
-          {/* Movimientos */}
           <p className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: B.muted }}>
             Movimientos ({movimientos.length})
           </p>
           {loading ? (
-            <div className="flex justify-center py-6">
-              <Loader2 className="w-6 h-6 animate-spin" style={{ color: B.green }} />
-            </div>
+            <div className="flex justify-center py-6"><Loader2 className="w-6 h-6 animate-spin" style={{ color: B.green }} /></div>
           ) : movimientos.length === 0 ? (
             <p className="text-sm text-center py-4" style={{ color: B.muted }}>Sin movimientos registrados</p>
           ) : (
             <div className="space-y-2">
               {movimientos.slice(0, 20).map(m => (
-                <div key={m.id} className="flex items-center justify-between p-3 rounded-xl"
-                  style={{ background: B.cream }}>
+                <div key={m.id} className="flex items-center justify-between p-3 rounded-xl" style={{ background: B.cream }}>
                   <div>
                     <p className="text-sm font-semibold" style={{ color: B.charcoal }}>{m.concepto}</p>
                     <p className="text-xs" style={{ color: B.muted }}>
                       {new Date(m.created_at).toLocaleString('es-PE', { timeZone: 'America/Lima', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}
                     </p>
                   </div>
-                  <span className="text-sm font-black"
-                    style={{ color: m.tipo === 'ingreso' ? B.green : B.terra }}>
+                  <span className="text-sm font-black" style={{ color: m.tipo === 'ingreso' ? B.green : B.terra }}>
                     {m.tipo === 'ingreso' ? '+' : '-'}S/ {m.monto.toFixed(2)}
                   </span>
                 </div>
@@ -228,31 +206,24 @@ function ModalReporte({ caja, onClose }: { caja: Caja; onClose: () => void }) {
 }
 
 // ─── Modal Egreso ─────────────────────────────────────────────────────────────
-function ModalEgreso({ caja, onClose, onSaved }: {
-  caja: Caja; onClose: () => void; onSaved: () => void;
-}) {
-  const { usuario }         = useAuth();
+function ModalEgreso({ caja, onClose, onSaved }: { caja: Caja; onClose: () => void; onSaved: () => void }) {
+  const { usuario }             = useAuth();
   const [concepto, setConcepto] = useState('');
   const [monto,    setMonto]    = useState('');
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
-  // ModalEgreso — handleRegistrar
   const handleRegistrar = async () => {
-    if (!concepto.trim()) { setError('Ingresa un concepto'); return; }
-    if (!monto || parseFloat(monto) <= 0) { setError('Ingresa un monto válido'); return; }
+    if (!concepto.trim())                     { setError('Ingresa un concepto'); return; }
+    if (!monto || parseFloat(monto) <= 0)     { setError('Ingresa un monto válido'); return; }
+    if (parseFloat(monto) > caja.monto_actual){ setError(`Saldo insuficiente. Disponible: S/ ${caja.monto_actual.toFixed(2)}`); return; }
     if (!usuario) return;
     setLoading(true); setError('');
     try {
-      // Usar la función de queries que ya existe en lugar de llamadas directas
-      const { registrarEgresoCaja } = await import('@/lib/supabase/queries');
       await registrarEgresoCaja(caja.id, concepto, parseFloat(monto), usuario.id);
       onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al registrar egreso');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Error al registrar egreso'); }
+    finally { setLoading(false); }
   };
 
   const inp: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
@@ -265,6 +236,12 @@ function ModalEgreso({ caja, onClose, onSaved }: {
           <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Registrar Egreso · {caja.nombre}</h2>
         </div>
         <div className="p-6 space-y-3">
+          {/* Saldo disponible */}
+          <div className="rounded-xl px-4 py-3 flex justify-between items-center"
+            style={{ background: `${B.green}10`, border: `1px solid ${B.green}25` }}>
+            <span className="text-xs font-bold" style={{ color: B.green }}>Saldo disponible</span>
+            <span className="text-base font-black" style={{ color: B.green }}>S/ {caja.monto_actual.toFixed(2)}</span>
+          </div>
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Concepto</label>
             <input type="text" value={concepto} onChange={e => setConcepto(e.target.value)}
@@ -293,6 +270,88 @@ function ModalEgreso({ caja, onClose, onSaved }: {
   );
 }
 
+// ─── Modal Editar Caja ────────────────────────────────────────────────────────
+function ModalEditarCaja({ caja, onClose, onSaved, usuarios }: {
+  caja: Caja; onClose: () => void; onSaved: () => void;
+  usuarios: Array<{ id: string; nombre: string }>;
+}) {
+  const [nombre,    setNombre]    = useState(caja.nombre);
+  const [usuarioId, setUsuarioId] = useState(caja.usuario_id ?? '');
+  const [zona,      setZona]      = useState(caja.zona ?? '');
+  const [loading,   setLoading]   = useState(false);
+  const [error,     setError]     = useState('');
+
+  const handleGuardar = async () => {
+    if (!nombre.trim()) { setError('El nombre es obligatorio'); return; }
+    setLoading(true); setError('');
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const db = supabase as any;
+      await db.from('cajas').update({
+        nombre:     nombre.trim(),
+        usuario_id: usuarioId || null,
+        zona:       zona || null,
+      }).eq('id', caja.id);
+      onSaved();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Error al guardar'); }
+    finally { setLoading(false); }
+  };
+
+  const inp: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: B.cream }}>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Editar · {caja.nombre}</h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
+            onMouseEnter={e => e.currentTarget.style.background = B.cream}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <div className="p-6 space-y-3">
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre</label>
+            <input type="text" value={nombre} onChange={e => setNombre(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+          </div>
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Zona</label>
+            <select value={zona} onChange={e => setZona(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
+              <option value="">Sin zona</option>
+              <option value="Salón Principal">Salón Principal</option>
+              <option value="Terraza">Terraza</option>
+              <option value="Barra">Barra</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Usuario asignado</label>
+            <select value={usuarioId} onChange={e => setUsuarioId(e.target.value)}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
+              <option value="">Sin usuario asignado</option>
+              {usuarios.map(u => <option key={u.id} value={u.id}>{u.nombre}</option>)}
+            </select>
+          </div>
+          {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
+        </div>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>Cancelar</button>
+          <button onClick={handleGuardar} disabled={loading}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+            style={{ background: B.green, color: B.cream }}>
+            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+            Guardar cambios
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Modal Nueva Caja ─────────────────────────────────────────────────────────
 function ModalNuevaCaja({ onClose, onSaved, usuarios }: {
   onClose: () => void; onSaved: () => void;
@@ -310,11 +369,8 @@ function ModalNuevaCaja({ onClose, onSaved, usuarios }: {
     try {
       await crearCaja(nombre, usuarioId || null, zona || undefined);
       onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al crear caja');
-    } finally {
-      setLoading(false);
-    }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Error al crear caja'); }
+    finally { setLoading(false); }
   };
 
   const inp: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
@@ -328,9 +384,10 @@ function ModalNuevaCaja({ onClose, onSaved, usuarios }: {
         </div>
         <div className="p-6 space-y-3">
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre</label>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre *</label>
             <input type="text" value={nombre} onChange={e => setNombre(e.target.value)}
-              placeholder="Ej: Caja 4" className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+              placeholder="Ej: Caja 4"
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
           </div>
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Zona (opcional)</label>
@@ -368,19 +425,19 @@ function ModalNuevaCaja({ onClose, onSaved, usuarios }: {
 }
 
 // ─── Caja Card ────────────────────────────────────────────────────────────────
-function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEliminar }: {
+function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEditar, onEliminar }: {
   caja: Caja;
   onAbrir:   (c: Caja) => void;
   onCerrar:  (c: Caja) => void;
   onReporte: (c: Caja) => void;
   onEgreso:  (c: Caja) => void;
+  onEditar:  (c: Caja) => void;
   onEliminar:(c: Caja) => void;
 }) {
   const abierta = caja.estado === 'abierta';
 
   return (
     <div className="rounded-2xl p-5" style={{ background: B.white, border: `1px solid ${B.cream}` }}>
-      {/* Header */}
       <div className="flex items-start justify-between mb-4">
         <div>
           <h3 className="text-base font-bold" style={{ color: B.charcoal }}>{caja.nombre}</h3>
@@ -393,7 +450,6 @@ function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEliminar }: 
         </span>
       </div>
 
-      {/* Saldos */}
       <div className="space-y-1.5 mb-4 pb-4 border-b" style={{ borderColor: B.cream }}>
         <div className="flex justify-between text-sm">
           <span style={{ color: B.muted }}>Saldo inicial</span>
@@ -405,7 +461,6 @@ function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEliminar }: 
         </div>
       </div>
 
-      {/* Fechas */}
       {caja.fecha_apertura && (
         <div className="text-xs space-y-0.5 mb-4" style={{ color: B.muted }}>
           <p>Apertura: {new Date(caja.fecha_apertura).toLocaleString('es-PE', { timeZone: 'America/Lima', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit' })}</p>
@@ -413,17 +468,16 @@ function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEliminar }: 
         </div>
       )}
 
-      {/* Acciones */}
       <div className="space-y-2">
+        {/* Botones principales */}
         <div className="flex gap-2">
-          {!abierta && (
+          {!abierta ? (
             <button onClick={() => onAbrir(caja)}
               className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
               style={{ background: B.green, color: B.cream }}>
               <CheckCircle className="w-4 h-4" /> Abrir
             </button>
-          )}
-          {abierta && (
+          ) : (
             <button onClick={() => onCerrar(caja)}
               className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
               style={{ background: B.terra, color: B.cream }}>
@@ -437,24 +491,33 @@ function CajaCard({ caja, onAbrir, onCerrar, onReporte, onEgreso, onEliminar }: 
           </button>
         </div>
 
-        {!abierta && (
-          <div className="grid grid-cols-3 gap-2">
-            <button onClick={() => onEgreso(caja)}
-              className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold"
-              style={{ background: '#fef0e6', color: B.terra }}>
-              <TrendingDown className="w-3.5 h-3.5" /> Egreso
-            </button>
-            <button className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold"
-              style={{ background: B.cream, color: B.charcoal }}>
-              <Edit className="w-3.5 h-3.5" /> Editar
-            </button>
-            <button onClick={() => onEliminar(caja)}
-              className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold"
-              style={{ background: '#fee2e2', color: B.terra }}>
-              <Trash2 className="w-3.5 h-3.5" /> Eliminar
-            </button>
-          </div>
-        )}
+        {/* Acciones secundarias — disponibles siempre */}
+        <div className="grid grid-cols-3 gap-2">
+          {/* FIX: Egreso disponible solo cuando la caja está ABIERTA (tenía la lógica invertida) */}
+          <button
+            onClick={() => onEgreso(caja)}
+            disabled={!abierta}
+            title={!abierta ? 'Abre la caja primero para registrar egresos' : 'Registrar egreso'}
+            className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: '#fef0e6', color: B.terra }}>
+            <TrendingDown className="w-3.5 h-3.5" /> Egreso
+          </button>
+          {/* FIX: Editar ahora funciona */}
+          <button onClick={() => onEditar(caja)}
+            className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold transition-all"
+            style={{ background: B.cream, color: B.charcoal }}
+            onMouseEnter={e => e.currentTarget.style.background = B.creamDark}
+            onMouseLeave={e => e.currentTarget.style.background = B.cream}>
+            <Edit className="w-3.5 h-3.5" /> Editar
+          </button>
+          <button onClick={() => onEliminar(caja)}
+            disabled={abierta}
+            title={abierta ? 'Cierra la caja antes de eliminar' : 'Eliminar caja'}
+            className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
+            style={{ background: '#fee2e2', color: B.terra }}>
+            <Trash2 className="w-3.5 h-3.5" /> Eliminar
+          </button>
+        </div>
 
         {!abierta && (
           <p className="text-[10px] text-center py-1.5 rounded-lg" style={{ background: `${B.green}10`, color: B.green }}>
@@ -472,6 +535,7 @@ type ModalState =
   | { tipo: 'cierre';   caja: Caja }
   | { tipo: 'reporte';  caja: Caja }
   | { tipo: 'egreso';   caja: Caja }
+  | { tipo: 'editar';   caja: Caja }
   | { tipo: 'nueva' }
   | null;
 
@@ -484,8 +548,10 @@ export function CajasView() {
   const cerradas     = cajas.filter(c => c.estado === 'cerrada').length;
 
   const handleEliminar = async (caja: Caja) => {
+    if (caja.estado === 'abierta') return; // guard extra — el botón ya debería estar disabled
     if (!confirm(`¿Eliminar ${caja.nombre}? Esta acción no se puede deshacer.`)) return;
-    await supabase.from('cajas').delete().eq('id', caja.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await (supabase as any).from('cajas').delete().eq('id', caja.id);
     refetchCajas();
   };
 
@@ -505,9 +571,9 @@ export function CajasView() {
 
       <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
         <KpiCard label="Total en Cajas" value={`S/ ${totalEnCajas.toFixed(2)}`} icon={DollarSign}  color={B.green} />
-        <KpiCard label="Total Cajas"    value={cajas.length}                     icon={CreditCard}  color={B.gold} />
-        <KpiCard label="Abiertas"       value={abiertas}                         icon={CheckCircle} color={B.green} />
-        <KpiCard label="Cerradas"       value={cerradas}                         icon={Lock}        color={B.terra} />
+        <KpiCard label="Total Cajas"    value={cajas.length}                    icon={CreditCard}  color={B.gold}  />
+        <KpiCard label="Abiertas"       value={abiertas}                        icon={CheckCircle} color={B.green} />
+        <KpiCard label="Cerradas"       value={cerradas}                        icon={Lock}        color={B.terra} />
       </div>
 
       {cajas.length === 0 ? (
@@ -518,26 +584,28 @@ export function CajasView() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {cajas.map(caja => (
             <CajaCard key={caja.id} caja={caja}
-              onAbrir={c   => setModal({ tipo: 'apertura', caja: c })}
-              onCerrar={c  => setModal({ tipo: 'cierre',   caja: c })}
-              onReporte={c => setModal({ tipo: 'reporte',  caja: c })}
-              onEgreso={c  => setModal({ tipo: 'egreso',   caja: c })}
-              onEliminar={handleEliminar} />
+              onAbrir={c    => setModal({ tipo: 'apertura', caja: c })}
+              onCerrar={c   => setModal({ tipo: 'cierre',   caja: c })}
+              onReporte={c  => setModal({ tipo: 'reporte',  caja: c })}
+              onEgreso={c   => setModal({ tipo: 'egreso',   caja: c })}
+              onEditar={c   => setModal({ tipo: 'editar',   caja: c })}
+              onEliminar={handleEliminar}
+            />
           ))}
         </div>
       )}
 
-      {/* Modales */}
-      {modal?.tipo === 'apertura' && <ModalApertura caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
-      {modal?.tipo === 'cierre'   && <ModalCierre   caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
-      {modal?.tipo === 'reporte'  && <ModalReporte  caja={modal.caja} onClose={() => setModal(null)} />}
-      {modal?.tipo === 'egreso'   && <ModalEgreso   caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
-      {modal?.tipo === 'nueva'    && (
-        <ModalNuevaCaja
-          onClose={() => setModal(null)}
-          onSaved={onGuardado}
-          usuarios={usuarios.map(u => ({ id: u.id, nombre: u.nombre }))}
-        />
+      {modal?.tipo === 'apertura' && <ModalApertura  caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
+      {modal?.tipo === 'cierre'   && <ModalCierre    caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
+      {modal?.tipo === 'reporte'  && <ModalReporte   caja={modal.caja} onClose={() => setModal(null)} />}
+      {modal?.tipo === 'egreso'   && <ModalEgreso    caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />}
+      {modal?.tipo === 'editar'   && (
+        <ModalEditarCaja caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado}
+          usuarios={usuarios.map(u => ({ id: u.id, nombre: u.nombre }))} />
+      )}
+      {modal?.tipo === 'nueva' && (
+        <ModalNuevaCaja onClose={() => setModal(null)} onSaved={onGuardado}
+          usuarios={usuarios.map(u => ({ id: u.id, nombre: u.nombre }))} />
       )}
     </div>
   );
