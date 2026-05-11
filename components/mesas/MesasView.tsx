@@ -4,9 +4,11 @@ import React, { useState, useMemo } from 'react';
 import {
   Plus, Users, Clock, CheckCircle, CircleCheck,
   UtensilsCrossed, Sparkles, CalendarClock, Loader2, X, Receipt,
+  ShoppingCart, Tag, AlertTriangle, Banknote, CreditCard, Smartphone,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Btn } from '@/components/ui';
+
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { actualizarEstadoMesa, crearMesa } from '@/lib/supabase/queries';
 import type { EstadoMesa, Mesa } from '@/lib/supabase/types';
@@ -199,6 +201,235 @@ function ModalNuevaMesa({ onClose, onSaved }: { onClose: () => void; onSaved: ()
   );
 }
 
+// ─── Tipos para comanda ───────────────────────────────────────────────────────
+interface ProductoComanda {
+  id: string;
+  nombre: string;
+  cantidad: number;
+  precio: number; // precio unitario
+}
+
+// TODO: reemplazar con fetch real a Supabase cuando exista la tabla de comandas
+const MOCK_PRODUCTOS: ProductoComanda[] = [
+  { id: '1', nombre: 'Lomo Saltado',      cantidad: 1, precio: 45.00 },
+  { id: '2', nombre: 'Agua Mineral',      cantidad: 2, precio: 5.00  },
+  { id: '3', nombre: 'Torta de Chocolate',cantidad: 1, precio: 15.00 },
+  { id: '4', nombre: 'Café Americano',    cantidad: 2, precio: 8.00  },
+];
+
+const METODOS_PAGO = [
+  { id: 'efectivo', label: 'Efectivo',  icon: Banknote },
+  { id: 'tarjeta',  label: 'Tarjeta',   icon: CreditCard },
+  { id: 'yape',     label: 'Yape',      icon: Smartphone },
+  { id: 'plin',     label: 'Plin',      icon: Smartphone },
+] as const;
+type MetodoPago = typeof METODOS_PAGO[number]['id'];
+
+// ─── Modal Cerrar Cuenta ──────────────────────────────────────────────────────
+function ModalCerrarCuenta({ mesa, onClose }: { mesa: MesaRow; onClose: () => void }) {
+  // TODO: reemplazar MOCK_PRODUCTOS con datos reales de Supabase
+  const productos = MOCK_PRODUCTOS;
+
+  const [descuento,      setDescuento]      = useState('');
+  const [multa,          setMulta]          = useState('');
+  const [metodoPago,     setMetodoPago]     = useState<MetodoPago>('efectivo');
+  const [efectivoRecibido, setEfectivoRecibido] = useState('');
+
+  const subtotal   = productos.reduce((s, p) => s + p.cantidad * p.precio, 0);
+  const descVal    = parseFloat(descuento)  || 0;
+  const multaVal   = parseFloat(multa)      || 0;
+  const total      = Math.max(0, subtotal - descVal + multaVal);
+  const vuelto     = metodoPago === 'efectivo'
+    ? Math.max(0, (parseFloat(efectivoRecibido) || 0) - total)
+    : null;
+
+  // Split products en dos columnas
+  const col1 = productos.filter((_, i) => i % 2 === 0);
+  const col2 = productos.filter((_, i) => i % 2 === 1);
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ background: 'rgba(20,20,30,0.65)', backdropFilter: 'blur(4px)' }}
+      onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col"
+        style={{ background: B.white, maxHeight: '92vh' }}
+        onClick={e => e.stopPropagation()}>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 shrink-0"
+          style={{ borderBottom: `1px solid ${B.cream}` }}>
+          <h2 className="text-lg font-bold flex items-center gap-2" style={{ color: B.charcoal }}>
+            <Receipt className="w-5 h-5" style={{ color: '#7C3AED' }} />
+            Cerrar Cuenta — {mesa.nombre ?? `Mesa ${mesa.numero}`}
+          </h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
+            onMouseEnter={e => e.currentTarget.style.background = B.cream}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 px-6 py-4 space-y-4">
+
+          {/* Datos del cliente */}
+          <div className="rounded-2xl p-4" style={{ background: B.cream }}>
+            <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-2"
+              style={{ color: B.charcoal }}>
+              <Users className="w-4 h-4" /> Datos del cliente
+            </p>
+            <div className="flex gap-6 text-sm">
+              <div>
+                <span style={{ color: B.muted }}>Cliente: </span>
+                <span className="font-semibold" style={{ color: B.charcoal }}>
+                  {mesa.mozo ?? 'Cliente General'}
+                </span>
+              </div>
+              <div>
+                <span style={{ color: B.muted }}>DNI: </span>
+                {/* TODO: conectar con datos reales del cliente */}
+                <span className="font-semibold" style={{ color: B.charcoal }}>00000000</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Lista de productos */}
+          <div className="rounded-2xl p-4" style={{ background: B.cream }}>
+            <p className="text-xs font-black uppercase tracking-widest mb-3 flex items-center gap-2"
+              style={{ color: B.charcoal }}>
+              <ShoppingCart className="w-4 h-4" /> Lista de productos
+            </p>
+            {/* Dos columnas */}
+            <div className="grid grid-cols-2 gap-x-4 gap-y-1.5">
+              {[col1, col2].map((col, ci) => (
+                <div key={ci} className="space-y-1.5">
+                  {col.map(p => (
+                    <div key={p.id} className="flex items-baseline justify-between text-sm">
+                      <span style={{ color: B.charcoal }}>
+                        <span className="font-bold mr-1">{p.cantidad}</span>{p.nombre}
+                      </span>
+                      <span className="font-semibold ml-2 shrink-0" style={{ color: B.charcoal }}>
+                        S/. {(p.cantidad * p.precio).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Descuento + Subtotal */}
+          <div className="flex items-center gap-3">
+            <button
+              className="flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-xl shrink-0"
+              style={{ color: '#16a34a', background: '#dcfce7', border: '1px solid #86efac' }}>
+              <Tag className="w-4 h-4" />
+              Descuento (opcional, S/.)
+            </button>
+            <input
+              type="number" min="0" placeholder="0.00"
+              value={descuento} onChange={e => setDescuento(e.target.value)}
+              className="w-24 px-3 py-2 rounded-xl text-sm outline-none text-right"
+              style={{ background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal }} />
+            <div className="ml-auto text-right">
+              <span className="text-xs" style={{ color: B.muted }}>Subtotal Consumo: </span>
+              <span className="font-bold" style={{ color: B.charcoal }}>S/. {subtotal.toFixed(2)}</span>
+            </div>
+          </div>
+
+          {/* Total + Multa */}
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-base font-black uppercase" style={{ color: B.charcoal }}>
+              Total a cobrar
+            </span>
+            <div className="px-4 py-2 rounded-xl text-sm font-bold"
+              style={{ background: B.cream, border: `1px solid ${B.creamDark}`, minWidth: 80, textAlign: 'right', color: B.charcoal }}>
+              {descuento ? `S/. ${Math.max(0, subtotal - descVal).toFixed(2)}` : '—'}
+            </div>
+            <button
+              className="flex items-center gap-1.5 text-sm font-semibold px-3 py-2 rounded-xl shrink-0"
+              style={{ color: '#b45309', background: '#fef3c7', border: '1px solid #fcd34d' }}>
+              <AlertTriangle className="w-4 h-4" />
+              Multa por daños (opcional, S/.)
+            </button>
+            <input
+              type="number" min="0" placeholder="0.00"
+              value={multa} onChange={e => setMulta(e.target.value)}
+              className="w-24 px-3 py-2 rounded-xl text-sm outline-none text-right"
+              style={{ background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal }} />
+            <span className="ml-auto font-black text-lg" style={{ color: '#7C3AED' }}>
+              S/. {total.toFixed(2)}
+            </span>
+          </div>
+
+          {/* Método de pago */}
+          <div>
+            <p className="text-xs font-black uppercase tracking-widest mb-2" style={{ color: B.muted }}>
+              Método de pago
+            </p>
+            <div className="grid grid-cols-4 gap-2">
+              {METODOS_PAGO.map(m => {
+                const activo = metodoPago === m.id;
+                return (
+                  <button key={m.id}
+                    onClick={() => setMetodoPago(m.id)}
+                    className="flex items-center justify-center gap-1.5 py-2.5 rounded-xl text-sm font-semibold transition-all"
+                    style={{
+                      background: activo ? '#7C3AED' : B.cream,
+                      color:      activo ? '#fff'    : B.charcoal,
+                      border:     `1px solid ${activo ? '#7C3AED' : B.creamDark}`,
+                    }}>
+                    <m.icon className="w-4 h-4" />
+                    {m.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Efectivo recibido + Vuelto */}
+          {metodoPago === 'efectivo' && (
+            <div className="space-y-2">
+              <p className="text-xs font-black uppercase tracking-widest" style={{ color: B.muted }}>
+                Efectivo recibido (S/.)
+              </p>
+              <input
+                type="number" min="0" placeholder="0.00"
+                value={efectivoRecibido} onChange={e => setEfectivoRecibido(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl text-sm outline-none"
+                style={{ background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal }} />
+              {vuelto !== null && vuelto >= 0 && efectivoRecibido && (
+                <p className="text-sm" style={{ color: B.muted }}>
+                  Vuelto:{' '}
+                  <span className="text-xl font-black" style={{ color: '#7C3AED' }}>
+                    S/. {vuelto.toFixed(2)}
+                  </span>
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="flex items-center justify-end gap-3 px-6 py-4 shrink-0"
+          style={{ borderTop: `1px solid ${B.cream}` }}>
+          <button onClick={onClose}
+            className="px-5 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>
+            Cancelar
+          </button>
+          <button
+            className="flex items-center gap-2 px-6 py-2.5 rounded-xl text-sm font-bold"
+            style={{ background: '#7C3AED', color: '#fff' }}>
+            <CheckCircle className="w-4 h-4" />
+            Confirmar Pago
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── MesaModal ────────────────────────────────────────────────────────────────
 function MesaModal({ mesa, onClose, onCambiarEstado, cambiando }: {
   mesa: MesaRow;
@@ -208,78 +439,162 @@ function MesaModal({ mesa, onClose, onCambiarEstado, cambiando }: {
 }) {
   const estado: EstadoMesa = mesa.estado ?? 'disponible';
   const est = ESTADOS[estado];
+  const [mostrarCambiarEstado, setMostrarCambiarEstado] = useState(false);
+  const [modalComanda, setModalComanda] = useState(false);
 
-  return (
+  const consumo = mesa.pedido_total != null ? `S/. ${Number(mesa.pedido_total).toFixed(2)}` : 'S/. 0.00';
+
+  return <>
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
+      style={{ background: 'rgba(30,30,40,0.55)', backdropFilter: 'blur(4px)' }}
       onClick={!cambiando ? onClose : undefined}>
-      <div className="rounded-2xl p-6 w-full max-w-sm shadow-2xl" style={{ background: B.white }}
+      <div className="rounded-2xl w-full max-w-md shadow-2xl overflow-hidden" style={{ background: B.white }}
         onClick={e => e.stopPropagation()}>
 
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
-              {mesa.nombre ?? `Mesa ${mesa.numero}`}
-            </h2>
-            <p className="text-xs" style={{ color: B.muted }}>{mesa.zona} · {mesa.capacidad} personas</p>
-          </div>
-          <span className="flex items-center gap-1.5 text-xs font-bold px-2.5 py-1 rounded-full"
-            style={{ background: est.bg, color: est.color }}>
-            <est.icon className="w-3.5 h-3.5 shrink-0" />
-            {est.label}
-          </span>
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-5" style={{ borderBottom: `1px solid ${B.cream}` }}>
+          <h2 className="text-xl font-bold" style={{ color: B.charcoal }}>
+            {mesa.nombre ?? `Mesa ${mesa.numero}`}
+            {mesa.zona ? <span className="font-normal text-base"> — {mesa.zona}</span> : null}
+          </h2>
+          <button onClick={onClose} className="p-1.5 rounded-lg transition-colors"
+            style={{ color: B.muted }}
+            onMouseEnter={e => e.currentTarget.style.background = B.cream}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
-        {estado === 'ocupada' && mesa.pedido_total != null && (
-          <div className="rounded-xl p-3 mb-4" style={{ background: B.cream }}>
-            {mesa.mozo && <p className="text-sm font-bold" style={{ color: B.charcoal }}>{mesa.mozo}</p>}
-            <p className="text-xl font-black mt-1" style={{ color: B.green }}>
-              S/ {Number(mesa.pedido_total).toFixed(2)}
+        {/* Info card */}
+        <div className="mx-6 mt-5 mb-4 rounded-2xl overflow-hidden" style={{ background: B.cream }}>
+          {/* Nombre de mesa grande */}
+          <div className="px-5 pt-5 pb-4">
+            <p className="text-2xl font-bold mb-4" style={{ color: B.charcoal }}>
+              {mesa.nombre ?? `Mesa ${mesa.numero}`}
             </p>
-            {mesa.pedido_inicio && (
-              <p className="text-xs mt-1" style={{ color: B.muted }}>
-                Desde las {new Date(mesa.pedido_inicio).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
-                {mesa.minutos_ocupada != null && ` · ${mesa.minutos_ocupada} min`}
-              </p>
+
+            {/* Fila: Estado */}
+            <div className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${B.creamDark}` }}>
+              <span className="text-sm" style={{ color: B.muted }}>Estado</span>
+              <span className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-full"
+                style={{ background: est.bg, color: est.color, border: `1px solid ${est.color}40` }}>
+                <est.icon className="w-3.5 h-3.5 shrink-0" />
+                {est.label}
+              </span>
+            </div>
+
+            {/* Fila: Mesa para */}
+            <div className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${B.creamDark}` }}>
+              <span className="text-sm" style={{ color: B.muted }}>Mesa para</span>
+              <span className="text-sm font-bold" style={{ color: B.charcoal }}>{mesa.capacidad} personas</span>
+            </div>
+
+            {/* Fila: Consumo */}
+            <div className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${B.creamDark}` }}>
+              <span className="text-sm" style={{ color: B.muted }}>Consumo</span>
+              <span className="text-sm font-bold" style={{ color: B.charcoal }}>{consumo}</span>
+            </div>
+
+            {/* Fila extra: mozo si ocupada */}
+            {estado === 'ocupada' && mesa.mozo && (
+              <div className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${B.creamDark}` }}>
+                <span className="text-sm" style={{ color: B.muted }}>Mozo</span>
+                <span className="text-sm font-semibold" style={{ color: B.charcoal }}>{mesa.mozo}</span>
+              </div>
+            )}
+
+            {/* Fila extra: hora si ocupada */}
+            {estado === 'ocupada' && mesa.pedido_inicio && (
+              <div className="flex items-center justify-between py-3" style={{ borderTop: `1px solid ${B.creamDark}` }}>
+                <span className="text-sm" style={{ color: B.muted }}>Desde</span>
+                <span className="text-sm font-semibold" style={{ color: B.charcoal }}>
+                  {new Date(mesa.pedido_inicio).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' })}
+                  {mesa.minutos_ocupada != null && ` · ${mesa.minutos_ocupada} min`}
+                </span>
+              </div>
             )}
           </div>
-        )}
-
-        <div className="space-y-1.5 mb-4">
-          <p className="text-[10px] font-black uppercase tracking-widest mb-2" style={{ color: B.muted }}>
-            Cambiar estado
-          </p>
-          {(Object.entries(ESTADOS) as [EstadoMesa, EstadoConfig][]).map(([key, val]) => {
-            const esActual = estado === key;
-            return (
-              <button key={key}
-                onClick={() => !esActual && onCambiarEstado(mesa.id, key)}
-                disabled={cambiando || esActual}
-                className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
-                style={{
-                  background: esActual ? val.bg : 'transparent',
-                  color:      esActual ? val.color : B.charcoal,
-                  border:     `1px solid ${esActual ? val.color : B.cream}`,
-                  cursor:     esActual ? 'default' : cambiando ? 'not-allowed' : 'pointer',
-                  opacity:    cambiando && !esActual ? 0.5 : 1,
-                }}>
-                <val.icon className="w-4 h-4 shrink-0" style={{ color: val.color }} />
-                {val.label}
-                {esActual && <CheckCircle className="w-4 h-4 ml-auto" style={{ color: val.color }} />}
-              </button>
-            );
-          })}
         </div>
 
-        {estado === 'ocupada' && (
-          <Btn color={B.charcoal} textColor={B.cream}>
-            <Receipt className="w-4 h-4" />
-            Ver pedido de la mesa
-          </Btn>
+        {/* Submenú cambiar estado (desplegable) */}
+        {mostrarCambiarEstado && (
+          <div className="mx-6 mb-4 rounded-2xl overflow-hidden" style={{ background: B.cream, border: `1px solid ${B.creamDark}` }}>
+            <div className="p-3 space-y-1">
+              {(Object.entries(ESTADOS) as [EstadoMesa, EstadoConfig][]).map(([key, val]) => {
+                const esActual = estado === key;
+                return (
+                  <button key={key}
+                    onClick={() => { if (!esActual) { onCambiarEstado(mesa.id, key); setMostrarCambiarEstado(false); } }}
+                    disabled={cambiando || esActual}
+                    className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all"
+                    style={{
+                      background: esActual ? val.bg : 'transparent',
+                      color:      esActual ? val.color : B.charcoal,
+                      border:     `1px solid ${esActual ? val.color : 'transparent'}`,
+                      cursor:     esActual ? 'default' : cambiando ? 'not-allowed' : 'pointer',
+                      opacity:    cambiando && !esActual ? 0.5 : 1,
+                    }}>
+                    <val.icon className="w-4 h-4 shrink-0" style={{ color: val.color }} />
+                    {val.label}
+                    {esActual && <CheckCircle className="w-4 h-4 ml-auto" style={{ color: val.color }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
         )}
+
+        {/* Botones de acción */}
+        <div className="px-6 pb-6 flex flex-wrap gap-2">
+          {/* Abrir Comanda */}
+          <button
+            onClick={() => setModalComanda(true)}
+            className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold flex-1 justify-center transition-opacity"
+            style={{ background: '#7C3AED', color: '#fff' }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}>
+            <CheckCircle className="w-4 h-4" />
+            Abrir Comanda
+          </button>
+
+          {/* Cambiar Estado */}
+          <button
+            onClick={() => setMostrarCambiarEstado(v => !v)}
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+            style={{ background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}>
+            <Users className="w-4 h-4" />
+            Cambiar Estado
+            <span style={{ fontSize: 10 }}>{mostrarCambiarEstado ? '▲' : '▼'}</span>
+          </button>
+
+          {/* Ver Cuenta */}
+          <button
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors"
+            style={{ background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}
+            onMouseEnter={e => e.currentTarget.style.background = B.creamDark}
+            onMouseLeave={e => e.currentTarget.style.background = B.cream}>
+            <Receipt className="w-4 h-4" />
+            Ver Cuenta
+          </button>
+
+          {/* Cancelar Mesa */}
+          <button
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold transition-opacity"
+            style={{ background: '#EF4444', color: '#fff' }}
+            onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
+            onMouseLeave={e => e.currentTarget.style.opacity = '1'}>
+            <X className="w-4 h-4" />
+            Cancelar Mesa
+          </button>
+        </div>
       </div>
     </div>
-  );
+
+    {/* Modal cerrar cuenta */}
+    {modalComanda && (
+      <ModalCerrarCuenta mesa={mesa} onClose={() => setModalComanda(false)} />
+    )}
+  </>;
 }
 
 // ─── Main export ──────────────────────────────────────────────────────────────
