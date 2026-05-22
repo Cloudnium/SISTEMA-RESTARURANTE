@@ -1,10 +1,31 @@
 // context/GlobalDataContext.tsx
+// ============================================================
+// CAMBIOS RESPECTO A LA VERSIÓN ANTERIOR:
+//
+//   ✅ Realtime real: los eventos ahora aplican el diff directo
+//      al estado local en vez de hacer refetch completo.
+//      - mesas     → INSERT/UPDATE/DELETE directo en estado
+//      - ventas    → INSERT agrega al inicio, UPDATE parchea
+//      - notifs    → INSERT agrega al inicio (filtrado por usuario)
+//      - usuarios  → UPDATE parchea, resto hace refetch
+//      - pedidos   → sigue con refetch (es una vista JOIN compleja)
+//
+//   ✅ usuarioActual eliminado de este contexto: ahora se lee
+//      desde AuthContext para evitar query y suscripción duplicados.
+//      IMPORTANTE: GlobalDataProvider debe estar dentro de AuthProvider.
+//
+//   ✅ Carga inicial lazy: setIsLoading(false) después de solo
+//      mesas + ventas (lo que el usuario ve primero).
+//      El resto carga en segundo plano sin bloquear la UI.
+// ============================================================
+
 'use client';
 
 import React, {
   createContext, useContext, useEffect, useState,
   useCallback, useMemo, useRef,
 } from 'react';
+import { useAuth } from '@/lib/auth/AuthContext';
 import {
   getProductos, getMesasConPedido, getClientes, getCajas,
   getVentasHoy, getVentasRecientes, getVentasSemana,
@@ -49,7 +70,6 @@ interface GlobalDataContextType {
   refetchNotificaciones:  () => Promise<void>;
   refetchMetricas:        () => Promise<void>;
   refetchAll:             () => Promise<void>;
-  usuarioActual:      Usuario | null;
 }
 
 const GlobalDataContext = createContext<GlobalDataContextType | null>(null);
@@ -61,6 +81,7 @@ export function useGlobalData() {
 }
 
 export function GlobalDataProvider({ children }: { children: React.ReactNode }) {
+  // ── Estado ────────────────────────────────────────────────────────────────
   const [productos,       setProductos]       = useState<Producto[]>([]);
   const [mesas,           setMesas]           = useState<Mesa[]>([]);
   const [clientes,        setClientes]        = useState<Cliente[]>([]);
@@ -74,16 +95,15 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const [usuarios,        setUsuarios]        = useState<Usuario[]>([]);
   const [notificaciones,  setNotificaciones]  = useState<Notificacion[]>([]);
   const [metricas,        setMetricas]        = useState<MetricasDashboard | null>(null);
-  const [usuarioActual,   setUsuarioActual]   = useState<Usuario | null>(null);
   const [isLoading,         setIsLoading]         = useState(true);
   const [isLoadingComplete, setIsLoadingComplete] = useState(false);
 
-  const cargaIniciadaRef = useRef(false);
-  const usuarioActualRef = useRef<Usuario | null>(null);
+  // ── usuarioActual viene de AuthContext (ya no duplicamos aquí) ────────────
+  const { usuario: usuarioActual } = useAuth();
+  const usuarioActualRef = useRef<typeof usuarioActual>(null);
+  useEffect(() => { usuarioActualRef.current = usuarioActual; }, [usuarioActual]);
 
-  useEffect(() => {
-    usuarioActualRef.current = usuarioActual;
-  }, [usuarioActual]);
+  const cargaIniciadaRef = useRef(false);
 
   // ── Fetches individuales ───────────────────────────────────────────────────
   const refetchProductos = useCallback(async () => {
@@ -154,67 +174,42 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('notificaciones:', e); }
   }, []);
 
-  // ── Carga por fases ────────────────────────────────────────────────────────
+  // ── Carga lazy por fases ───────────────────────────────────────────────────
+  // Fase 1: solo lo que el usuario ve en los primeros 2 segundos.
+  // Fase 2 y 3: sin await, cargan en segundo plano.
   const refetchAll = useCallback(async () => {
     setIsLoading(true);
     setIsLoadingComplete(false);
 
-    // Fase 1: datos críticos para mostrar la UI principal
+    // Fase 1 — mesas y ventas desbloquean la UI principal
     await Promise.allSettled([
-      refetchProductos(),
       refetchMesas(),
       refetchVentas(),
-      refetchVentasRecientes(),
     ]);
+    setIsLoading(false); // ← UI usable aquí
 
-    setIsLoading(false);
-
-    // Fase 2: datos secundarios
-    await Promise.allSettled([
+    // Fase 2 — sin await, no bloquea el render
+    Promise.allSettled([
+      refetchProductos(),
+      refetchVentasRecientes(),
       refetchClientes(),
       refetchCajas(),
-      refetchComprobantes(),
       refetchMetricas(),
-    ]);
-
-    // Fase 3: datos menos urgentes
-    await Promise.allSettled([
-      refetchCompras(),
-      refetchProduccion(),
-      refetchUsuarios(),
-    ]);
-
-    setIsLoadingComplete(true);
+    ]).then(() => {
+      // Fase 3 — menos urgente
+      Promise.allSettled([
+        refetchComprobantes(),
+        refetchCompras(),
+        refetchProduccion(),
+        refetchUsuarios(),
+      ]).then(() => setIsLoadingComplete(true));
+    });
   }, [
-    refetchProductos, refetchMesas, refetchVentas, refetchVentasRecientes,
-    refetchClientes, refetchCajas, refetchComprobantes, refetchMetricas,
+    refetchMesas, refetchVentas,
+    refetchProductos, refetchVentasRecientes, refetchClientes,
+    refetchCajas, refetchMetricas, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,
   ]);
-
-  // ── Usuario autenticado ────────────────────────────────────────────────────
-  useEffect(() => {
-    const cargarPerfil = async (userId: string) => {
-      const { data } = await supabase
-        .from('usuarios')
-        .select('*, caja:cajas(nombre)')
-        .eq('id', userId)
-        .single();
-      setUsuarioActual(data as Usuario | null);
-    };
-
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session?.user) cargarPerfil(session.user.id);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
-        if (session?.user) await cargarPerfil(session.user.id);
-        else setUsuarioActual(null);
-      },
-    );
-
-    return () => subscription.unsubscribe();
-  }, []);
 
   // ── Carga inicial (una sola vez, evita doble en StrictMode) ───────────────
   useEffect(() => {
@@ -224,56 +219,169 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     return () => clearTimeout(id);
   }, [refetchAll]);
 
-  // ── Realtime ───────────────────────────────────────────────────────────────
-  // Usamos refs para las funciones de refetch para evitar re-suscribirse
-  // cada vez que cambia alguna dependencia del useCallback.
-  const refetchMesasRef         = useRef(refetchMesas);
-  const refetchVentasRef        = useRef(refetchVentas);
-  const refetchVentasRecRef     = useRef(refetchVentasRecientes);
-  const refetchMetricasRef      = useRef(refetchMetricas);
+  // ── Refs estables para el canal Realtime ──────────────────────────────────
+  // Usamos refs para no re-suscribir el canal cuando cambian las funciones
+  const refetchMesasRef          = useRef(refetchMesas);
   const refetchNotificacionesRef = useRef(refetchNotificaciones);
-  const refetchUsuariosRef      = useRef(refetchUsuarios);
+  const refetchUsuariosRef       = useRef(refetchUsuarios);
 
   useEffect(() => { refetchMesasRef.current          = refetchMesas;          }, [refetchMesas]);
-  useEffect(() => { refetchVentasRef.current         = refetchVentas;         }, [refetchVentas]);
-  useEffect(() => { refetchVentasRecRef.current      = refetchVentasRecientes; }, [refetchVentasRecientes]);
-  useEffect(() => { refetchMetricasRef.current       = refetchMetricas;       }, [refetchMetricas]);
-  useEffect(() => { refetchNotificacionesRef.current = refetchNotificaciones;  }, [refetchNotificaciones]);
+  useEffect(() => { refetchNotificacionesRef.current = refetchNotificaciones; }, [refetchNotificaciones]);
   useEffect(() => { refetchUsuariosRef.current       = refetchUsuarios;       }, [refetchUsuarios]);
 
+  // ── Realtime — diff directo al estado, sin refetch salvo excepciones ───────
   useEffect(() => {
     const canal = supabase
       .channel('global-realtime')
-      // Mesas: se actualizan cuando cambia la mesa O el pedido activo
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'mesas' },
-        () => refetchMesasRef.current())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' },
-        () => refetchMesasRef.current())
-      // Ventas y métricas del dashboard
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'ventas' },
-        () => {
-          refetchVentasRef.current();
-          refetchVentasRecRef.current();
-          refetchMetricasRef.current();
-        })
-      // Usuarios: actualizar tabla cuando se crea/modifica un usuario
-      // (el INSERT lo hace la API Route con service_role, Realtime igual lo detecta)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'usuarios' },
-        () => refetchUsuariosRef.current())
-      // Notificaciones
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'notificaciones' },
-        () => refetchNotificacionesRef.current())
+
+      // ── MESAS: diff directo ──────────────────────────────────────────────
+      // La tabla mesas solo tiene campos simples (estado, nombre, zona).
+      // Podemos aplicar el cambio directo sin ir al servidor.
+      // EXCEPCIÓN: si cambia un PEDIDO (que es parte del JOIN en v_mesas_con_pedido),
+      // ahí sí necesitamos refetch porque el payload de mesas no incluye pedido_activo.
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'mesas' },
+        (payload) => {
+          setMesas(prev =>
+            prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m)
+          );
+        }
+      )
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'mesas' },
+        (payload) => {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          setMesas(prev => [...prev, payload.new as any]);
+        }
+      )
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'mesas' },
+        (payload) => {
+          setMesas(prev => prev.filter(m => m.id !== payload.old.id));
+        }
+      )
+
+      // ── PEDIDOS: refetch de mesas ────────────────────────────────────────
+      // El payload de pedidos no incluye los campos de la vista (mozo, minutos_ocupada, etc.)
+      // Necesitamos refetch para tener la vista completa actualizada.
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'pedidos' },
+        () => refetchMesasRef.current()
+      )
+
+      // ── VENTAS INSERT: agregar al inicio de las listas ───────────────────
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'ventas' },
+        (payload) => {
+          const nueva = payload.new as Venta;
+
+          // Agregar a ventas de hoy (si es de hoy en Lima)
+          const hoyLima = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+          if (nueva.fecha_local === hoyLima && nueva.estado === 'completada') {
+            setVentasHoy(prev => [nueva, ...prev]);
+          }
+
+          // Agregar a recientes (máx 10)
+          if (nueva.estado === 'completada') {
+            setVentasRecientes(prev => [nueva, ...prev.slice(0, 9)]);
+          }
+
+          // Actualizar métricas sin hacer query
+          if (nueva.estado === 'completada') {
+            setMetricas(prev => {
+              if (!prev) return prev;
+              const nuevoTotal       = prev.ventasHoy + (nueva.total ?? 0);
+              const nuevasTransacc   = prev.transacciones + 1;
+              return {
+                ...prev,
+                ventasHoy:      nuevoTotal,
+                transacciones:  nuevasTransacc,
+                ticketPromedio: nuevasTransacc > 0 ? nuevoTotal / nuevasTransacc : 0,
+              };
+            });
+          }
+
+          // ventas de semana: agregar
+          setVentasSemana(prev => [
+            ...prev,
+            { total: nueva.total ?? 0, fecha_local: nueva.fecha_local },
+          ]);
+        }
+      )
+
+      // ── VENTAS UPDATE: parchear en estado ────────────────────────────────
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'ventas' },
+        (payload) => {
+          const actualizada = payload.new as Venta;
+          setVentasHoy(prev =>
+            prev.map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v)
+          );
+          setVentasRecientes(prev =>
+            prev.map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v)
+          );
+          // Si fue anulada, re-calcular métricas desde el estado actual
+          // (más simple y seguro que intentar deshacer el cálculo incremental)
+          if (actualizada.estado === 'anulada') {
+            setVentasHoy(prev => {
+              const ventasActivas = prev.filter(v => v.estado === 'completada');
+              const total = ventasActivas.reduce((s, v) => s + (v.total ?? 0), 0);
+              setMetricas(m => m ? {
+                ...m,
+                ventasHoy:     total,
+                transacciones: ventasActivas.length,
+                ticketPromedio: ventasActivas.length > 0 ? total / ventasActivas.length : 0,
+              } : m);
+              return prev.map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v);
+            });
+          }
+        }
+      )
+
+      // ── NOTIFICACIONES: agregar al inicio ────────────────────────────────
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'notificaciones' },
+        (payload) => {
+          const uid   = usuarioActualRef.current?.id;
+          const notif = payload.new as Notificacion;
+          // Solo agregar si es para este usuario o es broadcast (usuario_id null)
+          if (!notif.usuario_id || notif.usuario_id === uid) {
+            setNotificaciones(prev => [notif, ...prev.slice(0, 19)]);
+          }
+        }
+      )
+
+      // ── USUARIOS: diff directo en UPDATE, refetch en resto ───────────────
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'usuarios' },
+        (payload) => {
+          setUsuarios(prev =>
+            prev.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u)
+          );
+        }
+      )
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'usuarios' },
+        () => refetchUsuariosRef.current()
+      )
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'usuarios' },
+        (payload) => {
+          setUsuarios(prev => prev.filter(u => u.id !== payload.old.id));
+        }
+      )
+
       .subscribe();
 
     return () => { supabase.removeChannel(canal); };
-  }, []);
+  }, []); // sin dependencias: el canal se crea una sola vez
 
+  // ── Valor del contexto ────────────────────────────────────────────────────
   const value = useMemo<GlobalDataContextType>(() => ({
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana,
     comprobantes, compras, produccionHoy, usuarios, notificaciones, metricas,
     isLoading, isLoadingComplete,
-    usuarioActual,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
     refetchVentas, refetchVentasRecientes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,
@@ -282,7 +390,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana,
     comprobantes, compras, produccionHoy, usuarios, notificaciones, metricas,
-    isLoading, isLoadingComplete, usuarioActual,
+    isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
     refetchVentas, refetchVentasRecientes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,

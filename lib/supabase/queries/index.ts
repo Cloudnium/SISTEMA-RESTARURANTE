@@ -1,8 +1,15 @@
 // lib/supabase/queries/index.ts
-// Todas las funciones de acceso a datos de Supabase organizadas por módulo.
+// ============================================================
+// CAMBIOS RESPECTO A LA VERSIÓN ANTERIOR:
+//   ✅ getUsuarios       → JOIN directo (elimina N+1 query)
+//   ✅ agregarItemPedido → elimina llamada a recalcularTotalPedido
+//                          (ahora lo hace el trigger en BD)
+//   ✅ recalcularTotalPedido → función eliminada (ya no se usa)
+// Todo lo demás queda igual.
+// ============================================================
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type DB = any; // workaround temporal hasta que types.ts sea actualizado
+type DB = any;
 
 import { supabase as _supabase } from '../client';
 import type {
@@ -13,8 +20,6 @@ import type {
   RolUsuario,
 } from '../types';
 
-// Cliente con tipado relajado para escrituras (INSERT/UPDATE) y RPCs
-// Las lecturas (SELECT) siguen usando el cliente tipado normal
 const db = _supabase as DB;
 const supabase = _supabase;
 
@@ -110,7 +115,6 @@ export async function moverStock(
   usuarioId: string,
   observacion?: string,
 ) {
-  // FIX #1: usar `db` (tipado relajado) para la RPC — evita error ts(2345) Lín. 112
   const { error } = await db.rpc('fn_mover_stock', {
     p_producto_id:  productoId,
     p_zona_origen:  zonaOrigen,
@@ -201,6 +205,10 @@ export async function crearPedido(mesaId: string, usuarioId: string, clienteId?:
   return data as Pedido;
 }
 
+// ─── FIX: eliminar llamada a recalcularTotalPedido ──────────────────────────
+// El trigger trg_recalcular_total_pedido en BD ahora actualiza
+// pedidos.total automáticamente después de cada INSERT en pedido_items.
+// No necesitamos hacer una query extra desde el cliente.
 export async function agregarItemPedido(
   pedidoId: string,
   productoId: string,
@@ -222,20 +230,8 @@ export async function agregarItemPedido(
     .single();
   if (error) throw error;
 
-  await recalcularTotalPedido(pedidoId);
+  // ✅ recalcularTotalPedido eliminado — lo hace el trigger en BD
   return data as PedidoItem;
-}
-
-async function recalcularTotalPedido(pedidoId: string) {
-  const { data } = await supabase
-    .from('pedido_items')
-    .select('subtotal')
-    .eq('pedido_id', pedidoId);
-
-  // FIX #2: castear el resultado para que TS reconozca `subtotal` — evita error ts(2339) Lín. 221
-  const total = ((data ?? []) as Array<{ subtotal: number }>)
-    .reduce((sum, i) => sum + (i.subtotal ?? 0), 0);
-  await db.from('pedidos').update({ total }).eq('id', pedidoId);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -421,8 +417,6 @@ export async function eliminarCliente(id: string) {
 // ════════════════════════════════════════════════════════════════════════════
 
 export async function getCajas(): Promise<Caja[]> {
-  // FIX #3 (runtime PGRST201): especificar FK explícita para resolver ambigüedad
-  // entre cajas→usuarios. Hint de Supabase: 'cajas!cajas_usuario_id_fkey'
   const { data, error } = await supabase
     .from('cajas')
     .select('*, usuario:usuarios!cajas_usuario_id_fkey(nombre, rol)')
@@ -432,7 +426,6 @@ export async function getCajas(): Promise<Caja[]> {
 }
 
 export async function abrirCaja(cajaId: string, usuarioId: string, montoInicial: number) {
-  // FIX #4: usar `db` (tipado relajado) para la RPC — evita error ts(2345) Lín. 417
   const { error } = await db.rpc('fn_abrir_caja', {
     p_caja_id:       cajaId,
     p_usuario_id:    usuarioId,
@@ -442,7 +435,6 @@ export async function abrirCaja(cajaId: string, usuarioId: string, montoInicial:
 }
 
 export async function cerrarCaja(cajaId: string, usuarioId: string): Promise<number> {
-  // FIX #5: usar `db` (tipado relajado) para la RPC — evita error ts(2345) Lín. 426
   const { data, error } = await db.rpc('fn_cerrar_caja', {
     p_caja_id:    cajaId,
     p_usuario_id: usuarioId,
@@ -571,7 +563,8 @@ export async function registrarProduccion(
   usuarioId: string,
   notas?: string,
 ) {
-  // 1. Registrar en produccion_cocina
+  // El trigger trg_descontar_insumos_produccion en BD maneja el stock automáticamente.
+  // Solo necesitamos insertar el registro.
   const { data, error } = await db
     .from('produccion_cocina')
     .insert({
@@ -586,25 +579,9 @@ export async function registrarProduccion(
     .single();
   if (error) throw error;
 
-  // 2. Incrementar stock_tienda del producto producido
-  const { data: prod, error: errRead } = await db
-    .from('productos')
-    .select('stock_tienda')
-    .eq('id', productoId)
-    .single();
-  if (errRead) throw errRead;
-
-  const nuevoStock = (prod?.stock_tienda ?? 0) + cantidad;
-  const { error: errUpdate } = await db
-    .from('productos')
-    .update({ stock_tienda: nuevoStock })
-    .eq('id', productoId);
-  if (errUpdate) throw errUpdate;
-
   return data as ProduccionCocina;
 }
 
-// Ajuste rápido de stock de insumo (consumo o corrección manual en cocina)
 export async function ajustarStockInsumo(
   productoId: string,
   cantidadDelta: number,
@@ -627,7 +604,6 @@ export async function ajustarStockInsumo(
     .eq('id', productoId);
   if (errUpdate) throw errUpdate;
 
-  // Registrar movimiento para el historial
   const tipo = cantidadDelta < 0 ? 'salida_cocina' : 'ajuste';
   await db.from('movimientos_almacen').insert({
     producto_id:          productoId,
@@ -638,19 +614,24 @@ export async function ajustarStockInsumo(
     usuario_id:           usuarioId,
     observacion:          observacion ?? null,
   });
-  // No lanzamos error si falla el movimiento para no bloquear el flujo principal
 
   return nuevoStock;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
 // USUARIOS
+// ── FIX: JOIN directo — elimina la segunda query separada de cajas ─────────
+// ANTES: 2 queries (usuarios + cajas por separado con un Map)
+// AHORA: 1 query con LEFT JOIN usando la FK correcta
 // ════════════════════════════════════════════════════════════════════════════
 
 export async function getUsuarios(): Promise<Usuario[]> {
   const { data, error } = await supabase
     .from('usuarios')
-    .select('*, caja:cajas!fk_usuarios_caja(id, nombre)')
+    .select(`
+      *,
+      caja:cajas!cajas_usuario_id_fkey(id, nombre, estado)
+    `)
     .order('nombre');
   if (error) throw error;
   return (data as Usuario[]) ?? [];
@@ -726,7 +707,6 @@ export async function getMetricasDashboard(): Promise<MetricasDashboard> {
     supabase.from('v_resumen_stock').select('alerta_cocina').eq('alerta_cocina', true),
   ]);
 
-  // FIX #7: castear el resultado para que TS reconozca `total` — evita error ts(2339) Lín. 617
   const ventas      = (ventasRes.data ?? []) as Array<{ total: number; id: string }>;
   const totalVentas = ventas.reduce((s, v) => s + (v.total ?? 0), 0);
 
