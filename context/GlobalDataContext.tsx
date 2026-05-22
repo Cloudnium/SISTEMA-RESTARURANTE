@@ -266,8 +266,6 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       .subscribe();
 
     return () => { supabase.removeChannel(canal); };
-  // Solo corre una vez — los refs mantienen las funciones actualizadas
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const value = useMemo<GlobalDataContextType>(() => ({

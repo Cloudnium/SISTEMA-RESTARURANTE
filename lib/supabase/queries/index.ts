@@ -571,6 +571,7 @@ export async function registrarProduccion(
   usuarioId: string,
   notas?: string,
 ) {
+  // 1. Registrar en produccion_cocina
   const { data, error } = await db
     .from('produccion_cocina')
     .insert({
@@ -584,7 +585,62 @@ export async function registrarProduccion(
     .select()
     .single();
   if (error) throw error;
+
+  // 2. Incrementar stock_tienda del producto producido
+  const { data: prod, error: errRead } = await db
+    .from('productos')
+    .select('stock_tienda')
+    .eq('id', productoId)
+    .single();
+  if (errRead) throw errRead;
+
+  const nuevoStock = (prod?.stock_tienda ?? 0) + cantidad;
+  const { error: errUpdate } = await db
+    .from('productos')
+    .update({ stock_tienda: nuevoStock })
+    .eq('id', productoId);
+  if (errUpdate) throw errUpdate;
+
   return data as ProduccionCocina;
+}
+
+// Ajuste rápido de stock de insumo (consumo o corrección manual en cocina)
+export async function ajustarStockInsumo(
+  productoId: string,
+  cantidadDelta: number,
+  usuarioId: string,
+  observacion?: string,
+) {
+  const { data: prod, error: errRead } = await db
+    .from('productos')
+    .select('stock_cocina')
+    .eq('id', productoId)
+    .single();
+  if (errRead) throw errRead;
+
+  const stockAntes = prod?.stock_cocina ?? 0;
+  const nuevoStock = Math.max(0, stockAntes + cantidadDelta);
+
+  const { error: errUpdate } = await db
+    .from('productos')
+    .update({ stock_cocina: nuevoStock })
+    .eq('id', productoId);
+  if (errUpdate) throw errUpdate;
+
+  // Registrar movimiento para el historial
+  const tipo = cantidadDelta < 0 ? 'salida_cocina' : 'ajuste';
+  await db.from('movimientos_almacen').insert({
+    producto_id:          productoId,
+    tipo,
+    cantidad:             Math.abs(cantidadDelta),
+    stock_cocina_antes:   stockAntes,
+    stock_cocina_despues: nuevoStock,
+    usuario_id:           usuarioId,
+    observacion:          observacion ?? null,
+  });
+  // No lanzamos error si falla el movimiento para no bloquear el flujo principal
+
+  return nuevoStock;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

@@ -21,6 +21,7 @@ import { RespaldoView } from '@/components/respaldo/RespaldoView';
 import { MENU_SECTIONS } from '@/lib/brand';
 import { useAuth } from '@/lib/auth/AuthContext';
 import AuthGuard from '@/components/auth/AuthGuard';
+import VentaMesaView from '@/components/ventamesa/VentaMesaView';
 
 const SOLO_ADMIN = ['dashboard', 'reportes', 'usuarios', 'respaldo'];
 
@@ -39,6 +40,7 @@ function renderView(active: string): React.ReactNode {
     case 'dashboard':   return <DashboardView />;
     case 'mesas':       return <MesasView />;
     case 'ventas':      return <VentasView />;
+    case  'venta-mesa':  return <VentaMesaView />;
 
     case 'produccion':  return <ProduccionView />;
     case 'insumos':     return <InsumosView />;

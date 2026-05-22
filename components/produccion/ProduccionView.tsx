@@ -36,16 +36,19 @@ function ModalProduccion({ onClose, onSaved, productosVenta }: {
     background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal,
   };
 
+  const productoSeleccionado = productosVenta.find(p => p.id === form.producto_id) ?? null;
+
   const handleGuardar = async () => {
     if (!form.producto_id) { setError('Selecciona un producto'); return; }
-    if (!form.cantidad || parseInt(form.cantidad) <= 0) { setError('Ingresa una cantidad válida'); return; }
+    const cant = parseFloat(form.cantidad);
+    if (!cant || cant <= 0) { setError('Ingresa una cantidad válida'); return; }
     if (!usuario) return;
 
     setGuardando(true); setError('');
     try {
       await registrarProduccion(
         form.producto_id, form.tipo,
-        parseInt(form.cantidad), form.unidad,
+        cant, form.unidad,
         usuario.id, form.notas || undefined
       );
       onSaved();
@@ -87,14 +90,34 @@ function ModalProduccion({ onClose, onSaved, productosVenta }: {
 
           {/* Producto */}
           <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Producto</label>
-            <select value={form.producto_id} onChange={e => setForm(f => ({ ...f, producto_id: e.target.value }))}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
-              <option value="">-- Selecciona un producto --</option>
-              {productosVenta.map(p => (
-                <option key={p.id} value={p.id}>{p.nombre}</option>
-              ))}
-            </select>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Producto elaborado</label>
+            {productosVenta.length === 0 ? (
+              <div className="rounded-xl p-4" style={{ background: '#fef0e6', border: `1px solid ${B.terra}30` }}>
+                <p className="text-sm font-bold" style={{ color: B.terra }}>No hay productos registrados</p>
+                <p className="text-xs mt-1" style={{ color: B.terra }}>
+                  Primero ve a <strong>Almacén</strong>, crea los productos que produce tu cocina (queque, torta, pan, etc.) y luego vuelve aquí para registrar la producción.
+                </p>
+              </div>
+            ) : (
+              <>
+                <select value={form.producto_id} onChange={e => setForm(f => ({ ...f, producto_id: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
+                  <option value="">-- Selecciona el producto que hicieron --</option>
+                  {productosVenta.map(p => (
+                    <option key={p.id} value={p.id}>{p.nombre}</option>
+                  ))}
+                </select>
+                {productoSeleccionado && (
+                  <div className="mt-2 rounded-xl px-3 py-2 flex items-center justify-between"
+                    style={{ background: B.cream }}>
+                    <p className="text-xs" style={{ color: B.muted }}>Stock actual en almacén</p>
+                    <p className="text-sm font-bold" style={{ color: B.green }}>
+                      {productoSeleccionado.stock_tienda} {productoSeleccionado.unidad_medida}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
           </div>
 
           {/* Cantidad + Unidad */}
@@ -144,12 +167,12 @@ function ModalProduccion({ onClose, onSaved, productosVenta }: {
 }
 
 export default function ProduccionView() {
-  const { produccionHoy, productos, isLoading, refetchProduccion } = useGlobalData();
+  const { produccionHoy, productos, isLoading, refetchProduccion, refetchProductos } = useGlobalData();
   const [busqueda, setBusqueda] = useState('');
   const [filtro,   setFiltro]   = useState<'todos' | TipoProduccion>('todos');
   const [modal,    setModal]    = useState(false);
 
-  // Solo productos de venta (los que se producen)
+  // Todos los productos de venta activos (con o sin stock — cocina los está produciendo ahora)
   const productosVenta = useMemo(() =>
     productos.filter(p => p.tipo === 'producto_venta' && p.activo), [productos]);
 
@@ -259,7 +282,7 @@ export default function ProduccionView() {
         <ModalProduccion
           productosVenta={productosVenta}
           onClose={() => setModal(false)}
-          onSaved={() => { setModal(false); refetchProduccion(); }}
+          onSaved={() => { setModal(false); refetchProduccion(); refetchProductos(); }}
         />
       )}
     </div>

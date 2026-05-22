@@ -1,4 +1,5 @@
-//lib/brand.ts
+// lib/brand.ts
+
 // ─── Brand tokens ─────────────────────────────────────────────────────────────
 // Single source of truth for MADRE · Postres y Café color palette
 export const B = {
@@ -17,10 +18,11 @@ export const B = {
   pageBg:       '#EDE5CE',
 } as const;
 
-// ─── Menu structure ────────────────────────────────────────────────────────────
+// ─── Menu structure ───────────────────────────────────────────────────────────
 import {
   LayoutDashboard, ShoppingCart, ChefHat, Package, Users, FileText,
-  BarChart3, Building2, CreditCard, Warehouse, Truck, Database, UtensilsCrossed,
+  BarChart3, Building2, CreditCard, Warehouse, Truck, Database,
+  UtensilsCrossed, ClipboardList,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -41,37 +43,38 @@ export const MENU_SECTIONS: MenuSection[] = [
     items: [
       { id: 'dashboard',   label: 'Dashboard',       icon: LayoutDashboard },
       { id: 'mesas',       label: 'Mesas',            icon: UtensilsCrossed },
-      { id: 'ventas',      label: 'Punto de Venta',   icon: ShoppingCart },
+      { id: 'venta-mesa',  label: 'Venta Mesa',       icon: ClipboardList   }, // ← NUEVO
+      { id: 'ventas',      label: 'Punto de Venta',   icon: ShoppingCart    },
     ],
   },
   {
     title: 'Cocina',
     items: [
-      { id: 'produccion',  label: 'Producción',       icon: ChefHat },
-      { id: 'insumos',     label: 'Insumos',          icon: Package },
-      { id: 'almacen',     label: 'Almacén',          icon: Warehouse },
+      { id: 'produccion',  label: 'Producción',       icon: ChefHat    },
+      { id: 'insumos',     label: 'Insumos',          icon: Package    },
+      { id: 'almacen',     label: 'Almacén',          icon: Warehouse  },
     ],
   },
   {
     title: 'Gestión',
     items: [
-      { id: 'clientes',    label: 'Clientes',         icon: Users },
-      { id: 'usuarios',    label: 'Usuarios',         icon: Building2 },
+      { id: 'clientes',    label: 'Clientes',         icon: Users      },
+      { id: 'usuarios',    label: 'Usuarios',         icon: Building2  },
       { id: 'cajas',       label: 'Cajas',            icon: CreditCard },
     ],
   },
   {
     title: 'Documentos',
     items: [
-      { id: 'comprobantes',label: 'Comprobantes',     icon: FileText },
-      { id: 'compras',     label: 'Compras',          icon: Truck },
-      { id: 'reportes',    label: 'Reportes',         icon: BarChart3 },
+      { id: 'comprobantes',label: 'Comprobantes',     icon: FileText   },
+      { id: 'compras',     label: 'Compras',          icon: Truck      },
+      { id: 'reportes',    label: 'Reportes',         icon: BarChart3  },
     ],
   },
   {
     title: 'Herramientas',
     items: [
-      { id: 'respaldo',    label: 'Respaldo',         icon: Database },
+      { id: 'respaldo',    label: 'Respaldo',         icon: Database   },
     ],
   },
 ];
