@@ -40,8 +40,8 @@ export default function LoginPage() {
     setLoading(true);
     try {
       const ok = await login(email, password);
-      if (ok) router.replace('/');
-      else setError('Correo o contraseña incorrectos');
+      if (!ok) setError('Correo o contraseña incorrectos');
+      // ← ya no llamamos router.replace aquí
     } catch {
       setError('Error al iniciar sesión. Intenta de nuevo.');
     } finally {

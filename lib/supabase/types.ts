@@ -323,6 +323,18 @@ export interface Notificacion {
   created_at: string;
 }
 
+export interface Sesion {
+  id:               string;
+  usuario_id:       string;
+  token:            string;
+  activa:           boolean;
+  fecha_inicio:     string;
+  fecha_cierre:     string | null;
+  ip_address:       string | null;
+  user_agent:       string | null;
+  ultima_actividad: string | null;
+}
+
 // ─── Tipo Database completo para el cliente Supabase tipado ──────────────────
 export interface Database {
   public: {
@@ -345,6 +357,11 @@ export interface Database {
       movimientos_caja:     { Row: MovimientoCaja;     Insert: Omit<MovimientoCaja,'id'|'created_at'|'caja'|'usuario'>; Update: never; };
       notificaciones:       { Row: Notificacion;       Insert: Omit<Notificacion,'id'|'created_at'>; Update: Partial<Pick<Notificacion,'leida'>>; };
       categorias_producto:  { Row: CategoriaProducto;  Insert: Omit<CategoriaProducto,'id'|'created_at'>; Update: Partial<Omit<CategoriaProducto,'id'>>; };
+      sesiones: {
+        Row:    Sesion;
+        Insert: Omit<Sesion, 'id' | 'fecha_inicio'>;
+        Update: Partial<Pick<Sesion, 'activa' | 'fecha_cierre' | 'ultima_actividad'>>;
+      };
     };
     Views: {
       v_ventas_hoy:         { Row: Venta & { comprobante_numero: string | null; comprobante_tipo: TipoComprobante | null } };
@@ -367,6 +384,19 @@ export interface Database {
       };
       fn_es_admin: { Args: Record<never, never>; Returns: boolean };
       fn_rol_usuario_actual: { Args: Record<never, never>; Returns: string };
+      // ─── Sesiones ───────────────────────────────────────────────────────────
+      fn_heartbeat_sesion: {
+        Args: { p_token: string };
+        Returns: void;
+      };
+      fn_verificar_sesion: {
+        Args: { p_token: string };
+        Returns: boolean;
+      };
+      fn_invalidar_sesiones_usuario: {
+        Args: { p_usuario_id: string };
+        Returns: void;
+      };
     };
     Enums: {
       rol_usuario:             RolUsuario;

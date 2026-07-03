@@ -1,10 +1,9 @@
 // components/shared/Sidebar.tsx
 'use client';
 
-import { X, LogOut } from 'lucide-react';
+import { X } from 'lucide-react';
+import { useEffect } from 'react';
 import { B, MENU_SECTIONS } from '@/lib/brand';
-import { useAuth } from '@/lib/auth/AuthContext';
-import { useRouter } from 'next/navigation';
 import Image from 'next/image';
 
 interface SidebarProps {
@@ -16,7 +15,7 @@ interface SidebarProps {
   userName?: string;
 }
 
-const OCULTO_CAJERO   = ['dashboard', 'reportes', 'usuarios', 'respaldo', 'cajas'];
+const OCULTO_CAJERO   = ['dashboard', 'reportes', 'usuarios', 'respaldo'];
 const OCULTO_COCINERO = ['cajas', 'compras', 'reportes', 'usuarios', 'respaldo', 'comprobantes'];
 
 const ROL_LABEL: Record<string, string> = {
@@ -26,18 +25,25 @@ const ROL_LABEL: Record<string, string> = {
 };
 
 export default function Sidebar({ open, setOpen, active, setActive, userRole, userName }: SidebarProps) {
-  const { logout } = useAuth();
-  const router     = useRouter();
 
-  const handleLogout = async () => {
-    try {
-      await logout();
-      router.replace('/login');
-    } catch (err) {
-      console.error('Error al cerrar sesión:', err);
-      router.replace('/login');
+  // ── Bloquea el scroll del body mientras el sidebar móvil está abierto ──────
+  useEffect(() => {
+    if (open) {
+      const scrollY = window.scrollY;
+      document.body.style.position = 'fixed';
+      document.body.style.top = `-${scrollY}px`;
+      document.body.style.width = '100%';
+      document.body.style.overflow = 'hidden';
+
+      return () => {
+        document.body.style.position = '';
+        document.body.style.top = '';
+        document.body.style.width = '';
+        document.body.style.overflow = '';
+        window.scrollTo(0, scrollY);
+      };
     }
-  };
+  }, [open]);
 
   const secciones = MENU_SECTIONS.map(sec => ({
     ...sec,
@@ -135,16 +141,6 @@ export default function Sidebar({ open, setOpen, active, setActive, userRole, us
 
         {/* Footer con logout */}
         <div className="p-3 border-t shrink-0" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.15)' }}>
-          <button
-            type="button"
-            onClick={handleLogout}
-            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all mb-2"
-            style={{ color: 'rgba(245,237,216,0.5)' }}
-            onMouseEnter={e => { e.currentTarget.style.background = 'rgba(211,72,54,0.15)'; e.currentTarget.style.color = '#f87171'; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; e.currentTarget.style.color = 'rgba(245,237,216,0.5)'; }}>
-            <LogOut className="w-4 h-4 shrink-0" />
-            Cerrar sesión
-          </button>
           <div className="text-center">
             <p className="text-xs font-bold" style={{ color: B.green }}>Cloudnium</p>
             <p className="text-[10px]" style={{ color: 'rgba(255,255,255,0.25)' }}>Sistema de gestión · v1.0.0</p>

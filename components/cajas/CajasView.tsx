@@ -1,934 +1,35 @@
 // components/cajas/CajasView.tsx
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
-import {
-  Plus, DollarSign, Eye, Lock, TrendingDown,
-  Edit, Trash2, Loader2, X, CheckCircle, CreditCard,
-} from 'lucide-react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import { Plus, DollarSign, Lock, CreditCard, CheckCircle, Loader2, Calendar } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, KpiCard, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
-import {
-  abrirCaja, cerrarCaja, crearCaja,
-  getMovimientosCaja, registrarEgresoCaja,
-} from '@/lib/supabase/queries';
 import { supabase } from '@/lib/supabase/client';
-import type { Caja, MovimientoCaja } from '@/lib/supabase/types';
+import type { Caja } from '@/lib/supabase/types';
 
-// Helper tipado para evitar el error "never" en supabase.from()
+// ── Componentes hijos ──────────────────────────────────────────────────────
+import { CajaCard }        from '@/components/cajas/CajaCard';
+import { ModalApertura }   from './modals/ModalApertura';
+import { ModalCierre }     from './modals/ModalCierre';
+import { ModalReporte }    from './modals/ModalReporte';
+import { ModalEgreso }     from './modals/ModalEgreso';
+import { ModalEditarCaja } from './modals/ModalEditarCaja';
+import { ModalNuevaCaja }  from './modals/ModalNuevaCaja';
+
+// ── Utilidades ─────────────────────────────────────────────────────────────
+import {
+  fmtSoles, calcularTotalEnCajas, contarCajasPorEstado,
+  filtrarMovimientosPorDia, hoyISOLima, buildReportePrintHTML,
+} from '@/utils/cajas/cajasUtils';
+import { getMovimientosCaja } from '@/lib/supabase/queries';
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
 
-// ─── Modal Apertura ───────────────────────────────────────────────────────────
-// Abre la caja con monto inicial S/ 0.00 sin confirmación.
-// Corrección: no llamar setState de forma síncrona dentro de useEffect.
-// Se usa useRef para marcar si ya inició la apertura y el setState
-// solo se llama desde callbacks asíncronos (dentro de .then / catch).
-function ModalApertura({
-  caja, onClose, onSaved,
-}: {
-  caja:    Caja;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { usuario }           = useAuth();
-  const [loading, setLoading] = useState(true);   // arranca en true: ya está abriendo
-  const [error,   setError]   = useState('');
-  const iniciado              = useRef(false);     // evita doble llamada en StrictMode
-
-  useEffect(() => {
-    if (iniciado.current || !usuario) return;
-    iniciado.current = true;
-
-    // Toda la lógica es asíncrona: setState solo se llama en callbacks,
-    // nunca de forma síncrona en el cuerpo del efecto.
-    abrirCaja(caja.id, usuario.id, 0)
-      .then(() =>
-        // Siempre actualiza usuario_id (no solo cuando es null)
-        db.from('cajas')
-          .update({ usuario_id: usuario.id })
-          .eq('id', caja.id)
-      )
-      .then(() => {
-        onSaved(); // cierra el modal y refresca
-      })
-      .catch((e: unknown) => {
-        setLoading(false);
-        // Muestra el mensaje completo
-        const msg = e instanceof Error ? e.message : JSON.stringify(e);
-        setError(msg); // <-- ya existía esto, pero agrega también:
-        console.error('Error completo al abrir caja:', e);
-      });
-  // usuario y caja.id son estables durante el ciclo de vida del modal
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={!loading ? onClose : undefined}
-    >
-      <div
-        className="rounded-2xl w-full max-w-xs shadow-2xl flex flex-col items-center py-10 gap-4"
-        style={{ background: B.white }}
-        onClick={e => e.stopPropagation()}
-      >
-        {error ? (
-          <>
-            <p className="text-sm font-bold px-6 text-center" style={{ color: B.terra }}>
-              {error}
-            </p>
-            <button
-              onClick={onClose}
-              className="px-6 py-2.5 rounded-xl text-sm font-semibold"
-              style={{ background: B.cream, color: B.charcoal }}
-            >
-              Cerrar
-            </button>
-          </>
-        ) : (
-          <>
-            <Loader2 className="w-10 h-10 animate-spin" style={{ color: B.green }} />
-            <p className="text-sm font-semibold" style={{ color: B.muted }}>
-              Abriendo {caja.nombre}…
-            </p>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Modal Cierre ─────────────────────────────────────────────────────────────
-function ModalCierre({
-  caja, onClose, onSaved,
-}: {
-  caja:    Caja;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { usuario }                 = useAuth();
-  const [loading,    setLoading]    = useState(false);
-  const [saldoFinal, setSaldoFinal] = useState<number | null>(null);
-  const [error,      setError]      = useState('');
-
-  const handleCerrar = async () => {
-    if (!usuario) return;
-    setLoading(true);
-    setError('');
-    try {
-      const saldo = await cerrarCaja(caja.id, usuario.id);
-      setSaldoFinal(saldo);
-      setTimeout(() => { onSaved(); }, 1500);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cerrar caja');
-      setLoading(false);
-    }
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-2xl w-full max-w-sm shadow-2xl"
-        style={{ background: B.white }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
-          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
-            Cerrar {caja.nombre}
-          </h2>
-        </div>
-
-        <div className="p-6">
-          {saldoFinal !== null ? (
-            <div className="flex flex-col items-center py-4 gap-3">
-              <CheckCircle className="w-14 h-14" style={{ color: B.green }} />
-              <p className="text-lg font-bold" style={{ color: B.charcoal }}>Caja cerrada</p>
-              <div className="rounded-xl p-4 w-full text-center" style={{ background: B.cream }}>
-                <p className="text-xs uppercase tracking-widest mb-1" style={{ color: B.muted }}>
-                  Saldo final
-                </p>
-                <p className="text-3xl font-black" style={{ color: B.green }}>
-                  S/ {saldoFinal.toFixed(2)}
-                </p>
-              </div>
-            </div>
-          ) : (
-            <>
-              <div className="rounded-xl p-4 mb-4" style={{ background: B.cream }}>
-                <div className="flex justify-between text-sm mb-1">
-                  <span style={{ color: B.muted }}>Saldo actual</span>
-                  <span className="font-bold" style={{ color: B.charcoal }}>
-                    S/ {caja.monto_actual.toFixed(2)}
-                  </span>
-                </div>
-                {caja.usuario && (
-                  <div className="flex justify-between text-sm">
-                    <span style={{ color: B.muted }}>Cajero</span>
-                    <span className="font-semibold" style={{ color: B.charcoal }}>
-                      {caja.usuario.nombre}
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              <p className="text-sm text-center mb-4" style={{ color: B.muted }}>
-                ¿Confirmas el cierre de esta caja?
-              </p>
-
-              {error && (
-                <p
-                  className="text-xs px-3 py-2 rounded-xl mb-3"
-                  style={{ background: '#fef0e6', color: B.terra }}
-                >
-                  {error}
-                </p>
-              )}
-
-              <div className="flex gap-3">
-                <button
-                  onClick={onClose}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-                  style={{ background: B.cream, color: B.charcoal }}
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={handleCerrar}
-                  disabled={loading}
-                  className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-                  style={{ background: B.terra, color: B.cream }}
-                >
-                  {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Cerrar caja
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Modal Reporte ────────────────────────────────────────────────────────────
-function ModalReporte({ caja, onClose }: { caja: Caja; onClose: () => void }) {
-  const [movimientos, setMovimientos] = useState<MovimientoCaja[]>([]);
-  const [loading,     setLoading]     = useState(true);
-
-  useEffect(() => {
-    getMovimientosCaja(caja.id)
-      .then(data => setMovimientos(data as MovimientoCaja[]))
-      .catch(console.error)
-      .finally(() => setLoading(false));
-
-    const channel = supabase
-      .channel(`movimientos_caja_${caja.id}`)
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'movimientos_caja', filter: `caja_id=eq.${caja.id}` },
-        () => {
-          getMovimientosCaja(caja.id)
-            .then(data => setMovimientos(data as MovimientoCaja[]))
-            .catch(console.error);
-        },
-      )
-      .subscribe();
-
-    return () => { supabase.removeChannel(channel); };
-  }, [caja.id]);
-
-  const totalIngresos = movimientos.filter(m => m.tipo === 'ingreso').reduce((a, m) => a + m.monto, 0);
-  const totalEgresos  = movimientos.filter(m => m.tipo === 'egreso').reduce((a, m) => a + m.monto, 0);
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-2xl w-full max-w-lg shadow-2xl max-h-[85vh] flex flex-col"
-        style={{ background: B.white }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 border-b shrink-0"
-          style={{ borderColor: B.cream }}
-        >
-          <div>
-            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
-              Reporte · {caja.nombre}
-            </h2>
-            {caja.usuario && (
-              <p className="text-xs mt-0.5" style={{ color: B.muted }}>
-                Cajero: {caja.usuario.nombre}
-              </p>
-            )}
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg"
-            style={{ color: B.muted }}
-            onMouseEnter={e => { e.currentTarget.style.background = B.cream; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 overflow-y-auto flex-1">
-          <div className="grid grid-cols-3 gap-3 mb-5">
-            {([
-              { label: 'Saldo inicial', value: caja.monto_inicial, color: B.charcoal },
-              { label: 'Ingresos',      value: totalIngresos,      color: B.green   },
-              { label: 'Egresos',       value: totalEgresos,       color: B.terra   },
-            ] as const).map(s => (
-              <div key={s.label} className="rounded-xl p-3 text-center" style={{ background: B.cream }}>
-                <p className="text-xs" style={{ color: B.muted }}>{s.label}</p>
-                <p className="text-lg font-black mt-0.5" style={{ color: s.color }}>
-                  S/ {s.value.toFixed(2)}
-                </p>
-              </div>
-            ))}
-          </div>
-
-          <div
-            className="rounded-xl p-3 mb-5 text-center"
-            style={{ background: `${B.green}12`, border: `1px solid ${B.green}30` }}
-          >
-            <p className="text-xs" style={{ color: B.green }}>Saldo actual</p>
-            <p className="text-2xl font-black" style={{ color: B.green }}>
-              S/ {caja.monto_actual.toFixed(2)}
-            </p>
-          </div>
-
-          <p className="text-xs font-black uppercase tracking-widest mb-3" style={{ color: B.muted }}>
-            Movimientos ({movimientos.length})
-          </p>
-
-          {loading ? (
-            <div className="flex justify-center py-6">
-              <Loader2 className="w-6 h-6 animate-spin" style={{ color: B.green }} />
-            </div>
-          ) : movimientos.length === 0 ? (
-            <p className="text-sm text-center py-4" style={{ color: B.muted }}>
-              Sin movimientos registrados
-            </p>
-          ) : (
-            <div className="space-y-2">
-              {movimientos.map(m => (
-                <div
-                  key={m.id}
-                  className="flex items-center justify-between p-3 rounded-xl"
-                  style={{ background: B.cream }}
-                >
-                  <div>
-                    <p className="text-sm font-semibold" style={{ color: B.charcoal }}>{m.concepto}</p>
-                    <p className="text-xs" style={{ color: B.muted }}>
-                      {new Date(m.created_at).toLocaleString('es-PE', {
-                        timeZone: 'America/Lima',
-                        day: '2-digit', month: '2-digit',
-                        hour: '2-digit', minute: '2-digit',
-                      })}
-                    </p>
-                  </div>
-                  <span
-                    className="text-sm font-black"
-                    style={{ color: m.tipo === 'ingreso' ? B.green : B.terra }}
-                  >
-                    {m.tipo === 'ingreso' ? '+' : '-'}S/ {m.monto.toFixed(2)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Modal Egreso ─────────────────────────────────────────────────────────────
-function ModalEgreso({
-  caja, onClose, onSaved,
-}: {
-  caja:    Caja;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const { usuario }             = useAuth();
-  const [concepto, setConcepto] = useState('');
-  const [monto,    setMonto]    = useState('');
-  const [loading,  setLoading]  = useState(false);
-  const [error,    setError]    = useState('');
-
-  const handleRegistrar = async () => {
-    if (!concepto.trim())                      { setError('Ingresa un concepto'); return; }
-    if (!monto || parseFloat(monto) <= 0)      { setError('Ingresa un monto válido'); return; }
-    if (parseFloat(monto) > caja.monto_actual) {
-      setError(`Saldo insuficiente. Disponible: S/ ${caja.monto_actual.toFixed(2)}`);
-      return;
-    }
-    if (!usuario) return;
-    setLoading(true);
-    setError('');
-    try {
-      await registrarEgresoCaja(caja.id, concepto, parseFloat(monto), usuario.id);
-      onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al registrar egreso');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const inp: React.CSSProperties = {
-    background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal,
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-2xl w-full max-w-sm shadow-2xl"
-        style={{ background: B.white }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
-          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
-            Registrar Egreso · {caja.nombre}
-          </h2>
-        </div>
-
-        <div className="p-6 space-y-3">
-          <div
-            className="rounded-xl px-4 py-3 flex justify-between items-center"
-            style={{ background: `${B.green}10`, border: `1px solid ${B.green}25` }}
-          >
-            <span className="text-xs font-bold" style={{ color: B.green }}>Saldo disponible</span>
-            <span className="text-base font-black" style={{ color: B.green }}>
-              S/ {caja.monto_actual.toFixed(2)}
-            </span>
-          </div>
-
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Concepto
-            </label>
-            <input
-              type="text"
-              value={concepto}
-              onChange={e => setConcepto(e.target.value)}
-              placeholder="Ej: Pago proveedor, Gastos varios…"
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            />
-          </div>
-
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Monto (S/)
-            </label>
-            <input
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={monto}
-              onChange={e => setMonto(e.target.value)}
-              placeholder="0.00"
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            />
-          </div>
-
-          {error && (
-            <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>
-              {error}
-            </p>
-          )}
-        </div>
-
-        <div className="px-6 pb-6 flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-            style={{ background: B.cream, color: B.charcoal }}
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleRegistrar}
-            disabled={loading}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-            style={{ background: B.terra, color: B.cream }}
-          >
-            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            Registrar egreso
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Modal Editar Caja ────────────────────────────────────────────────────────
-function ModalEditarCaja({
-  caja, onClose, onSaved, usuarios,
-}: {
-  caja:     Caja;
-  onClose:  () => void;
-  onSaved:  () => void;
-  usuarios: Array<{ id: string; nombre: string }>;
-}) {
-  const [nombre,    setNombre]    = useState(caja.nombre);
-  const [usuarioId, setUsuarioId] = useState(caja.usuario_id ?? '');
-  const [zona,      setZona]      = useState(caja.zona ?? '');
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState('');
-
-  const handleGuardar = async () => {
-    if (!nombre.trim()) { setError('El nombre es obligatorio'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      const { error: err } = await db.from('cajas')
-        .update({
-          nombre:     nombre.trim(),
-          usuario_id: usuarioId || null,
-          zona:       zona      || null,
-        })
-        .eq('id', caja.id);
-      if (err) throw err;
-      onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al guardar');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const inp: React.CSSProperties = {
-    background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal,
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-2xl w-full max-w-sm shadow-2xl"
-        style={{ background: B.white }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div
-          className="flex items-center justify-between px-6 py-4 border-b"
-          style={{ borderColor: B.cream }}
-        >
-          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>
-            Editar · {caja.nombre}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg"
-            style={{ color: B.muted }}
-            onMouseEnter={e => { e.currentTarget.style.background = B.cream; }}
-            onMouseLeave={e => { e.currentTarget.style.background = 'transparent'; }}
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-
-        <div className="p-6 space-y-3">
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Nombre
-            </label>
-            <input
-              type="text"
-              value={nombre}
-              onChange={e => setNombre(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            />
-          </div>
-
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Zona
-            </label>
-            <select
-              value={zona}
-              onChange={e => setZona(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            >
-              <option value="">Sin zona</option>
-              <option value="Salón Principal">Salón Principal</option>
-              <option value="Terraza">Terraza</option>
-              <option value="Barra">Barra</option>
-            </select>
-          </div>
-
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Usuario asignado
-            </label>
-            <select
-              value={usuarioId}
-              onChange={e => setUsuarioId(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            >
-              <option value="">Sin usuario asignado</option>
-              {usuarios.map(u => (
-                <option key={u.id} value={u.id}>{u.nombre}</option>
-              ))}
-            </select>
-          </div>
-
-          {error && (
-            <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>
-              {error}
-            </p>
-          )}
-        </div>
-
-        <div className="px-6 pb-6 flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-            style={{ background: B.cream, color: B.charcoal }}
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleGuardar}
-            disabled={loading}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-            style={{ background: B.green, color: B.cream }}
-          >
-            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            Guardar cambios
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Modal Nueva Caja ─────────────────────────────────────────────────────────
-function ModalNuevaCaja({
-  onClose, onSaved, usuarios,
-}: {
-  onClose:  () => void;
-  onSaved:  () => void;
-  usuarios: Array<{ id: string; nombre: string }>;
-}) {
-  const [nombre,    setNombre]    = useState('');
-  const [usuarioId, setUsuarioId] = useState('');
-  const [zona,      setZona]      = useState('');
-  const [loading,   setLoading]   = useState(false);
-  const [error,     setError]     = useState('');
-
-  const handleCrear = async () => {
-    if (!nombre.trim()) { setError('El nombre es obligatorio'); return; }
-    setLoading(true);
-    setError('');
-    try {
-      await crearCaja(nombre, usuarioId || null, zona || undefined);
-      onSaved();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al crear caja');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const inp: React.CSSProperties = {
-    background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal,
-  };
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
-      <div
-        className="rounded-2xl w-full max-w-sm shadow-2xl"
-        style={{ background: B.white }}
-        onClick={e => e.stopPropagation()}
-      >
-        <div className="px-6 py-4 border-b" style={{ borderColor: B.cream }}>
-          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Nueva Caja</h2>
-        </div>
-
-        <div className="p-6 space-y-3">
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Nombre *
-            </label>
-            <input
-              type="text"
-              value={nombre}
-              onChange={e => setNombre(e.target.value)}
-              placeholder="Ej: Caja 4"
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            />
-          </div>
-
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Zona (opcional)
-            </label>
-            <select
-              value={zona}
-              onChange={e => setZona(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            >
-              <option value="">Sin zona específica</option>
-              <option value="Salón Principal">Salón Principal</option>
-              <option value="Terraza">Terraza</option>
-              <option value="Barra">Barra</option>
-            </select>
-          </div>
-
-          <div>
-            <label
-              className="text-xs font-black uppercase tracking-wide block mb-1.5"
-              style={{ color: B.muted }}
-            >
-              Usuario asignado
-            </label>
-            <select
-              value={usuarioId}
-              onChange={e => setUsuarioId(e.target.value)}
-              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none"
-              style={inp}
-            >
-              <option value="">Sin usuario asignado</option>
-              {usuarios.map(u => (
-                <option key={u.id} value={u.id}>{u.nombre}</option>
-              ))}
-            </select>
-          </div>
-
-          {error && (
-            <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>
-              {error}
-            </p>
-          )}
-        </div>
-
-        <div className="px-6 pb-6 flex gap-3">
-          <button
-            onClick={onClose}
-            className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-            style={{ background: B.cream, color: B.charcoal }}
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={handleCrear}
-            disabled={loading}
-            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-            style={{ background: B.green, color: B.cream }}
-          >
-            {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-            Crear caja
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Caja Card ────────────────────────────────────────────────────────────────
-function CajaCard({
-  caja, onAbrir, onCerrar, onReporte, onEgreso, onEditar, onEliminar,
-}: {
-  caja:       Caja;
-  onAbrir:    (c: Caja) => void;
-  onCerrar:   (c: Caja) => void;
-  onReporte:  (c: Caja) => void;
-  onEgreso:   (c: Caja) => void;
-  onEditar:   (c: Caja) => void;
-  onEliminar: (c: Caja) => void;
-}) {
-  const abierta = caja.estado === 'abierta';
-
-  return (
-    <div
-      className="rounded-2xl p-5 flex flex-col"
-      style={{ background: B.white, border: `1px solid ${B.cream}` }}
-    >
-      {/* Encabezado */}
-      <div className="flex items-start justify-between mb-4">
-        <div className="flex-1 min-w-0 pr-2">
-          <h3 className="text-base font-bold truncate" style={{ color: B.charcoal }}>
-            {caja.nombre}
-          </h3>
-          <p className="text-sm truncate" style={{ color: B.muted }}>
-            {caja.usuario?.nombre ?? 'Sin asignar'}
-          </p>
-          {caja.zona && (
-            <p className="text-xs mt-0.5 truncate" style={{ color: B.muted }}>
-              {caja.zona}
-            </p>
-          )}
-        </div>
-        <span
-          className="text-[10px] font-bold px-2.5 py-1 rounded-full shrink-0"
-          style={
-            abierta
-              ? { background: '#e8f5e2', color: B.green }
-              : { background: '#fee2e2', color: B.terra }
-          }
-        >
-          {abierta ? 'Abierta' : 'Cerrada'}
-        </span>
-      </div>
-
-      {/* Montos */}
-      <div className="space-y-1.5 mb-4 pb-4 border-b" style={{ borderColor: B.cream }}>
-        <div className="flex justify-between text-sm">
-          <span style={{ color: B.muted }}>Saldo inicial</span>
-          <span className="font-semibold" style={{ color: B.charcoal }}>
-            S/ {caja.monto_inicial.toFixed(2)}
-          </span>
-        </div>
-        <div className="flex justify-between text-sm">
-          <span style={{ color: B.muted }}>Saldo actual</span>
-          <span className="text-lg font-black" style={{ color: B.green }}>
-            S/ {caja.monto_actual.toFixed(2)}
-          </span>
-        </div>
-      </div>
-
-      {/* Fechas */}
-      {caja.fecha_apertura && (
-        <div className="text-xs space-y-0.5 mb-4" style={{ color: B.muted }}>
-          <p>
-            Apertura:{' '}
-            {new Date(caja.fecha_apertura).toLocaleString('es-PE', {
-              timeZone: 'America/Lima',
-              day: '2-digit', month: '2-digit',
-              hour: '2-digit', minute: '2-digit',
-            })}
-          </p>
-          {caja.fecha_cierre && (
-            <p>
-              Cierre:{' '}
-              {new Date(caja.fecha_cierre).toLocaleString('es-PE', {
-                timeZone: 'America/Lima',
-                day: '2-digit', month: '2-digit',
-                hour: '2-digit', minute: '2-digit',
-              })}
-            </p>
-          )}
-        </div>
-      )}
-
-      {/* Botones */}
-      <div className="space-y-2 mt-auto">
-        <div className="flex gap-2">
-          {!abierta ? (
-            <button
-              onClick={() => onAbrir(caja)}
-              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
-              style={{ background: B.green, color: B.cream }}
-            >
-              <CheckCircle className="w-4 h-4" /> Abrir
-            </button>
-          ) : (
-            <button
-              onClick={() => onCerrar(caja)}
-              className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
-              style={{ background: B.terra, color: B.cream }}
-            >
-              <Lock className="w-4 h-4" /> Cerrar
-            </button>
-          )}
-          <button
-            onClick={() => onReporte(caja)}
-            className="flex-1 flex items-center justify-center gap-2 py-2 rounded-xl text-sm font-bold"
-            style={{ background: B.charcoal, color: B.cream }}
-          >
-            <Eye className="w-4 h-4" /> Reporte
-          </button>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            onClick={() => onEgreso(caja)}
-            disabled={!abierta}
-            title={!abierta ? 'Abre la caja primero' : 'Registrar egreso'}
-            className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: '#fef0e6', color: B.terra }}
-          >
-            <TrendingDown className="w-3.5 h-3.5" /> Egreso
-          </button>
-          <button
-            onClick={() => onEditar(caja)}
-            className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold transition-all"
-            style={{ background: B.cream, color: B.charcoal }}
-            onMouseEnter={e => { e.currentTarget.style.background = B.creamDark; }}
-            onMouseLeave={e => { e.currentTarget.style.background = B.cream; }}
-          >
-            <Edit className="w-3.5 h-3.5" /> Editar
-          </button>
-          <button
-            onClick={() => onEliminar(caja)}
-            disabled={abierta}
-            title={abierta ? 'Cierra la caja antes de eliminar' : 'Eliminar caja'}
-            className="flex items-center justify-center gap-1 py-2 rounded-xl text-xs font-bold disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: '#fee2e2', color: B.terra }}
-          >
-            <Trash2 className="w-3.5 h-3.5" /> Eliminar
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─── Tipos de modal ───────────────────────────────────────────────────────────
+// ── Tipos de modal ─────────────────────────────────────────────────────────
 type ModalState =
   | { tipo: 'apertura'; caja: Caja }
   | { tipo: 'cierre';   caja: Caja }
@@ -938,12 +39,19 @@ type ModalState =
   | { tipo: 'nueva' }
   | null;
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ── Componente principal ───────────────────────────────────────────────────
 export function CajasView() {
   const { cajas, usuarios, isLoading, refetchCajas } = useGlobalData();
+  const { usuario: yo } = useAuth();
   const [modal, setModal] = useState<ModalState>(null);
 
-  // Realtime: refresca cuando cambia cualquier caja en la BD
+  // ── Filtro por fecha ────────────────────────────────────────────────────
+  const [fechaFiltro, setFechaFiltro] = useState(hoyISOLima());
+  const [diaActual,   setDiaActual]   = useState(true);
+
+  const esCajero = yo?.rol === 'cajero';
+
+  // ── Realtime ──────────────────────────────────────────────────────────────
   useEffect(() => {
     const channel = supabase
       .channel('cajas_realtime_view')
@@ -953,23 +61,78 @@ export function CajasView() {
         () => { refetchCajas(); },
       )
       .subscribe();
-
     return () => { supabase.removeChannel(channel); };
   }, [refetchCajas]);
 
-  const totalEnCajas = cajas.reduce((a, c) => a + c.monto_actual, 0);
-  const abiertas     = cajas.filter(c => c.estado === 'abierta').length;
-  const cerradas     = cajas.filter(c => c.estado === 'cerrada').length;
+  // ── KPIs ──────────────────────────────────────────────────────────────────
+  const totalEnCajas = useMemo(() => calcularTotalEnCajas(cajas), [cajas]);
+  const { abiertas, cerradas } = useMemo(() => contarCajasPorEstado(cajas), [cajas]);
 
-  const handleEliminar = async (caja: Caja) => {
+  // ── Cajas visibles: cajero solo ve la suya ────────────────────────────────
+  const cajasVisibles = useMemo(() => {
+    if (esCajero) return cajas.filter(c => c.id === yo?.caja_id);
+    return cajas;
+  }, [cajas, esCajero, yo]);
+
+  // ── Fecha activa del filtro (solo afecta el contenido del Reporte, no las cards) ──
+  const fechaActiva = useMemo(
+    () => (diaActual ? hoyISOLima() : fechaFiltro),
+    [diaActual, fechaFiltro],
+  );
+
+  // ── Usuarios libres (sin caja) para modal nueva caja ──────────────────────
+  const usuariosLibres = useMemo(
+    () => usuarios
+      .filter(u => !u.caja_id)
+      .map(u => ({ id: u.id, nombre: u.nombre })),
+    [usuarios],
+  );
+
+  // ── Usuarios para editar una caja: libres + el asignado actualmente ───────
+  const usuariosParaEditar = useCallback((caja: Caja) =>
+    usuarios
+      .filter(u => !u.caja_id || u.id === caja.usuario_id)
+      .map(u => ({ id: u.id, nombre: u.nombre })),
+  [usuarios]);
+
+  // ── Handlers ──────────────────────────────────────────────────────────────
+  const handleEliminar = useCallback(async (caja: Caja) => {
     if (caja.estado === 'abierta') return;
     if (!confirm(`¿Eliminar ${caja.nombre}? Esta acción no se puede deshacer.`)) return;
     await db.from('cajas').delete().eq('id', caja.id);
     refetchCajas();
+  }, [refetchCajas]);
+
+  const handleImprimirRapido = useCallback(async (caja: Caja) => {
+    try {
+      const movimientos = await getMovimientosCaja(caja.id);
+      const delDia = filtrarMovimientosPorDia(movimientos as never[], fechaActiva);
+      const w = window.open('', '_blank', 'width=440,height=720');
+      if (!w) return;
+      w.document.write(buildReportePrintHTML(caja, delDia as never));
+      w.document.close();
+      setTimeout(() => w.print(), 350);
+    } catch (e) {
+      console.error('Error al imprimir reporte:', e);
+    }
+  }, [fechaActiva]);
+
+  const onGuardado = useCallback(() => {
+    setModal(null);
+    refetchCajas();
+  }, [refetchCajas]);
+
+  const handleFechaChange = (v: string) => {
+    setFechaFiltro(v);
+    setDiaActual(false);
   };
 
-  const onGuardado = () => { setModal(null); refetchCajas(); };
+  const handleDiaActual = () => {
+    setDiaActual(true);
+    setFechaFiltro(hoyISOLima());
+  };
 
+  // ── Loading ───────────────────────────────────────────────────────────────
   if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-[60vh]">
@@ -980,47 +143,89 @@ export function CajasView() {
 
   return (
     <div>
+      {/* ── Header ── */}
       <PageHeader
         title="Gestión de Cajas"
         subtitle="Administra el estado y operaciones de las cajas del sistema"
         action={
-          <Btn onClick={() => setModal({ tipo: 'nueva' })}>
-            <Plus className="w-4 h-4" /> Nueva Caja
-          </Btn>
+          !esCajero ? (
+            <Btn onClick={() => setModal({ tipo: 'nueva' })}>
+              <Plus className="w-4 h-4" /> Nueva Caja
+            </Btn>
+          ) : undefined
         }
       />
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
-        <KpiCard label="Total en Cajas" value={`S/ ${totalEnCajas.toFixed(2)}`} icon={DollarSign}  color={B.green} />
-        <KpiCard label="Total Cajas"    value={cajas.length}                    icon={CreditCard}  color={B.gold}  />
-        <KpiCard label="Abiertas"       value={abiertas}                        icon={CheckCircle} color={B.green} />
-        <KpiCard label="Cerradas"       value={cerradas}                        icon={Lock}        color={B.terra} />
+      {/* ── KPIs (solo admin) ── */}
+      {!esCajero && (
+        <div className="grid grid-cols-2 xl:grid-cols-4 gap-4 mb-5">
+          <KpiCard label="Total en Cajas" value={fmtSoles(totalEnCajas)} icon={DollarSign} color={B.green} />
+          <KpiCard label="Total Cajas"    value={cajas.length}           icon={CreditCard} color={B.gold}  />
+          <KpiCard label="Abiertas"       value={abiertas}               icon={CheckCircle} color={B.green} />
+          <KpiCard label="Cerradas"       value={cerradas}               icon={Lock}        color={B.terra} />
+        </div>
+      )}
+
+      {/* ── Filtro por fecha (afecta el contenido del Reporte de cada caja, no su visibilidad) ── */}
+      <div
+        className="rounded-2xl p-4 mb-5"
+        style={{ background: B.white, border: `1px solid ${B.cream}` }}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+          <div className="flex items-center gap-2 text-sm font-semibold shrink-0" style={{ color: B.charcoal }}>
+            <Calendar className="w-4 h-4" style={{ color: B.green }} />
+            Reportes por Fecha
+          </div>
+          <input
+            type="date"
+            value={fechaFiltro}
+            onChange={e => handleFechaChange(e.target.value)}
+            className="px-3 py-2 rounded-xl text-sm outline-none w-full sm:w-auto"
+            style={{ background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal }}
+          />
+          <button
+            onClick={handleDiaActual}
+            className="px-3 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 justify-center shrink-0"
+            style={{
+              background: diaActual ? '#e8f5e2' : B.cream,
+              color:      diaActual ? B.green   : B.muted,
+            }}
+          >
+            <CheckCircle className="w-3.5 h-3.5" /> Día actual
+          </button>
+        </div>
+        <p className="text-[11px] mt-2" style={{ color: B.muted }}>
+          Esta fecha define qué movimientos se muestran al abrir el Reporte o imprimir cada caja.
+        </p>
       </div>
 
-      {/* Grid de cajas */}
-      {cajas.length === 0 ? (
+      {/* ── Grid de cajas ── */}
+      {cajasVisibles.length === 0 ? (
         <div className="text-center py-16" style={{ color: B.muted }}>
-          <p className="text-sm">No hay cajas configuradas.</p>
+          <p className="text-sm">
+            {esCajero ? 'No tienes una caja asignada.' : 'No hay cajas configuradas.'}
+          </p>
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {cajas.map(caja => (
+          {cajasVisibles.map(caja => (
             <CajaCard
               key={caja.id}
               caja={caja}
-              onAbrir={c    => setModal({ tipo: 'apertura', caja: c })}
-              onCerrar={c   => setModal({ tipo: 'cierre',   caja: c })}
-              onReporte={c  => setModal({ tipo: 'reporte',  caja: c })}
-              onEgreso={c   => setModal({ tipo: 'egreso',   caja: c })}
-              onEditar={c   => setModal({ tipo: 'editar',   caja: c })}
+              esCajero={esCajero}
+              onAbrir={c     => setModal({ tipo: 'apertura', caja: c })}
+              onCerrar={c    => setModal({ tipo: 'cierre',   caja: c })}
+              onReporte={c   => setModal({ tipo: 'reporte',  caja: c })}
+              onEgreso={c    => setModal({ tipo: 'egreso',   caja: c })}
+              onEditar={c    => setModal({ tipo: 'editar',   caja: c })}
               onEliminar={handleEliminar}
+              onImprimir={handleImprimirRapido}
             />
           ))}
         </div>
       )}
 
-      {/* Modales */}
+      {/* ── Modales ── */}
       {modal?.tipo === 'apertura' && (
         <ModalApertura caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />
       )}
@@ -1028,7 +233,13 @@ export function CajasView() {
         <ModalCierre caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />
       )}
       {modal?.tipo === 'reporte' && (
-        <ModalReporte caja={modal.caja} onClose={() => setModal(null)} />
+        <ModalReporte
+          key={modal.caja.id}
+          caja={modal.caja}
+          fecha={fechaActiva}
+          onClose={() => setModal(null)}
+          onEgreso={c => setModal({ tipo: 'egreso', caja: c })}
+        />
       )}
       {modal?.tipo === 'egreso' && (
         <ModalEgreso caja={modal.caja} onClose={() => setModal(null)} onSaved={onGuardado} />
@@ -1038,14 +249,14 @@ export function CajasView() {
           caja={modal.caja}
           onClose={() => setModal(null)}
           onSaved={onGuardado}
-          usuarios={usuarios.map(u => ({ id: u.id, nombre: u.nombre }))}
+          usuarios={usuariosParaEditar(modal.caja)}
         />
       )}
       {modal?.tipo === 'nueva' && (
         <ModalNuevaCaja
           onClose={() => setModal(null)}
           onSaved={onGuardado}
-          usuarios={usuarios.map(u => ({ id: u.id, nombre: u.nombre }))}
+          usuarios={usuariosLibres}
         />
       )}
     </div>

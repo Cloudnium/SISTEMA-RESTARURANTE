@@ -1,15 +1,19 @@
 // lib/supabase/queries/index.ts
-// ============================================================
-// CAMBIOS RESPECTO A LA VERSIÓN ANTERIOR:
-//   ✅ getUsuarios       → JOIN directo (elimina N+1 query)
-//   ✅ agregarItemPedido → elimina llamada a recalcularTotalPedido
-//                          (ahora lo hace el trigger en BD)
-//   ✅ recalcularTotalPedido → función eliminada (ya no se usa)
-// Todo lo demás queda igual.
-// ============================================================
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type DB = any;
+
+export interface TopProductoHoy {
+  producto_id: string;
+  nombre:      string;
+  qty:         number;
+}
+
+// Tipo auxiliar para el resultado del JOIN de venta_items
+interface VentaItemConRelaciones {
+  cantidad:   number;
+  producto:   { id: string; nombre: string } | null;
+  venta:      { fecha_local: string; estado: string } | null;
+}
 
 import { supabase as _supabase } from '../client';
 import type {
@@ -126,6 +130,36 @@ export async function moverStock(
   if (error) throw error;
 }
 
+export async function getTopProductosHoy(): Promise<TopProductoHoy[]> {
+  const { data: ventasHoy, error: errVentas } = await db
+    .from('v_ventas_hoy')
+    .select('id');
+
+  if (errVentas) throw errVentas;
+  const ids = ((ventasHoy ?? []) as Array<{ id: string }>).map(v => v.id);
+  if (ids.length === 0) return [];
+
+  const { data, error } = await db
+    .from('venta_items')
+    .select('cantidad, producto:productos(id, nombre)')
+    .in('venta_id', ids);
+
+  if (error) throw error;
+
+  const map = new Map<string, TopProductoHoy>();
+  for (const item of (data ?? []) as VentaItemConRelaciones[]) {
+    if (!item.producto) continue;
+    const prev = map.get(item.producto.id) ?? {
+      producto_id: item.producto.id,
+      nombre:      item.producto.nombre,
+      qty:         0,
+    };
+    map.set(item.producto.id, { ...prev, qty: prev.qty + (item.cantidad ?? 0) });
+  }
+
+  return [...map.values()].sort((a, b) => b.qty - a.qty).slice(0, 5);
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // MESAS
 // ════════════════════════════════════════════════════════════════════════════
@@ -205,10 +239,6 @@ export async function crearPedido(mesaId: string, usuarioId: string, clienteId?:
   return data as Pedido;
 }
 
-// ─── FIX: eliminar llamada a recalcularTotalPedido ──────────────────────────
-// El trigger trg_recalcular_total_pedido en BD ahora actualiza
-// pedidos.total automáticamente después de cada INSERT en pedido_items.
-// No necesitamos hacer una query extra desde el cliente.
 export async function agregarItemPedido(
   pedidoId: string,
   productoId: string,
@@ -230,7 +260,6 @@ export async function agregarItemPedido(
     .single();
   if (error) throw error;
 
-  // ✅ recalcularTotalPedido eliminado — lo hace el trigger en BD
   return data as PedidoItem;
 }
 
@@ -248,25 +277,44 @@ export async function getVentasHoy(): Promise<Venta[]> {
 }
 
 export async function getVentasRecientes(limite = 10): Promise<Venta[]> {
-  const { data, error } = await supabase
+  const { data: ventas, error } = await supabase
     .from('ventas')
-    .select(`
-      *,
-      cliente:clientes(nombre),
-      comprobante:comprobantes(numero, tipo)
-    `)
+    .select('*, cliente:clientes(nombre)')
     .eq('estado', 'completada')
     .order('created_at', { ascending: false })
     .limit(limite);
   if (error) throw error;
-  return (data as Venta[]) ?? [];
+  if (!ventas || ventas.length === 0) return [];
+
+  const ids = (ventas as Venta[]).map((v) => v.id);
+  const { data: comprobantes } = await supabase
+    .from('comprobantes')
+    .select('venta_id, numero, tipo, serie, correlativo')
+    .in('venta_id', ids);
+
+  const compMap = new Map(
+    ((comprobantes ?? []) as Array<{
+      venta_id: string;
+      numero:      string | null;
+      tipo:        string | null;
+      serie:       string | null;
+      correlativo: number | null;
+    }>).map((c) => [c.venta_id, c])
+  );
+
+  return (ventas as Venta[]).map((v) => ({
+    ...v,
+    comprobante: compMap.get(v.id) ?? null,
+  })) as Venta[];
 }
 
 export async function getVentasSemana() {
-  const hoy = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
-  const diaSemana = hoy.getDay();
+  const iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+  const [year, month, day] = iso.split('-').map(Number);
+  const hoy = new Date(Date.UTC(year, month - 1, day));
+  const diaSemana = hoy.getUTCDay();
   const lunes = new Date(hoy);
-  lunes.setDate(hoy.getDate() - (diaSemana === 0 ? 6 : diaSemana - 1));
+  lunes.setUTCDate(hoy.getUTCDate() - (diaSemana === 0 ? 6 : diaSemana - 1));
   const lunesFecha = lunes.toISOString().split('T')[0];
 
   const { data, error } = await supabase
@@ -280,12 +328,20 @@ export async function getVentasSemana() {
 }
 
 export async function crearVenta(payload: CrearVentaPayload, usuarioId: string): Promise<Venta> {
-  const subtotal = payload.items.reduce((s, i) => s + i.precio * i.cantidad, 0);
-  const igv      = subtotal * 0.18;
-  const total    = subtotal + igv - (payload.descuento_monto ?? 0);
-  const vuelto   = payload.monto_recibido != null ? payload.monto_recibido - total : null;
+  // ── Cálculo correcto para Perú ────────────────────────────────────────────
+  // Los precios de los productos YA incluyen IGV (precio de venta al público).
+  // total    = suma(precio × cantidad) − descuento  → lo que paga el cliente
+  // subtotal = total / 1.18                          → base imponible contable
+  // igv      = total − subtotal                      → IGV contenido
+  const totalBruto = payload.items.reduce((s, i) => s + i.precio * i.cantidad, 0);
+  const total      = parseFloat(Math.max(0, totalBruto - (payload.descuento_monto ?? 0)).toFixed(2));
+  const subtotal   = parseFloat((total / 1.18).toFixed(2));
+  const igv        = parseFloat((total - subtotal).toFixed(2));
+  const vuelto     = payload.monto_recibido != null ? payload.monto_recibido - total : null;
 
-  // 1. Crear la venta
+  const fechaLima = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
+
+  // 1. Insertar cabecera de venta
   const { data: venta, error: errVenta } = await db
     .from('ventas')
     .insert({
@@ -303,12 +359,19 @@ export async function crearVenta(payload: CrearVentaPayload, usuarioId: string):
       vuelto,
       notas:            payload.notas ?? null,
       estado:           'completada',
+      fecha_local:      fechaLima,
+      hora_local: new Date().toLocaleTimeString('en-GB', {
+        timeZone: 'America/Lima',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }),
     })
     .select()
     .single();
   if (errVenta) throw errVenta;
 
-  // 2. Insertar items (trigger descuenta stock)
+  // 2. Insertar items → el trigger trg_descontar_stock_venta descuenta stock automáticamente
   const items = payload.items.map(i => ({
     venta_id:        venta.id,
     producto_id:     i.id,
@@ -318,7 +381,7 @@ export async function crearVenta(payload: CrearVentaPayload, usuarioId: string):
   const { error: errItems } = await db.from('venta_items').insert(items);
   if (errItems) throw errItems;
 
-  // 3. Comprobante (trigger genera el número)
+  // 3. Insertar comprobante → el trigger fn_generar_numero_comprobante genera el número
   const { error: errComp } = await db.from('comprobantes').insert({
     venta_id:   venta.id,
     tipo:       payload.tipo_comprobante,
@@ -326,7 +389,7 @@ export async function crearVenta(payload: CrearVentaPayload, usuarioId: string):
   });
   if (errComp) throw errComp;
 
-  // 4. Si viene de mesa, cerrar pedido y liberar mesa
+  // 4. Si viene de mesa, cerrar pedido y poner mesa en limpieza
   if (payload.mesa_id) {
     await db
       .from('pedidos')
@@ -419,7 +482,10 @@ export async function eliminarCliente(id: string) {
 export async function getCajas(): Promise<Caja[]> {
   const { data, error } = await supabase
     .from('cajas')
-    .select('*, usuario:usuarios!cajas_usuario_id_fkey(nombre, rol)')
+    .select(`
+      *,
+      usuario:usuario_id(nombre, rol)
+    `)
     .order('nombre');
   if (error) throw error;
   return (data as Caja[]) ?? [];
@@ -540,6 +606,41 @@ export async function eliminarCompra(id: string) {
   if (error) throw error;
 }
 
+export async function actualizarCompra(
+  id: string,
+  compra: Omit<Compra, 'id' | 'created_at' | 'updated_at' | 'usuario' | 'items'>,
+  items: Array<{
+    producto_id?:    string;
+    descripcion:     string;
+    cantidad:        number;
+    precio_unitario: number;
+    zona_destino:    ZonaAlmacen;
+  }>,
+) {
+  const { data, error } = await db
+    .from('compras')
+    .update(compra)
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+
+  const { error: errDel } = await db
+    .from('compra_items')
+    .delete()
+    .eq('compra_id', id);
+  if (errDel) throw errDel;
+
+  if (items.length > 0) {
+    const { error: errItems } = await db
+      .from('compra_items')
+      .insert(items.map(i => ({ ...i, compra_id: id })));
+    if (errItems) throw errItems;
+  }
+
+  return data as Compra;
+}
+
 // ════════════════════════════════════════════════════════════════════════════
 // PRODUCCIÓN COCINA
 // ════════════════════════════════════════════════════════════════════════════
@@ -563,8 +664,6 @@ export async function registrarProduccion(
   usuarioId: string,
   notas?: string,
 ) {
-  // El trigger trg_descontar_insumos_produccion en BD maneja el stock automáticamente.
-  // Solo necesitamos insertar el registro.
   const { data, error } = await db
     .from('produccion_cocina')
     .insert({
@@ -578,6 +677,43 @@ export async function registrarProduccion(
     .select()
     .single();
   if (error) throw error;
+
+  if (tipo === 'porcionado') {
+    const { data: prod, error: errRead } = await db
+      .from('productos')
+      .select('stock_tienda, stock_cocina, stock_general')
+      .eq('id', productoId)
+      .single();
+    if (errRead) throw errRead;
+
+    const stockTiendaAntes  = prod?.stock_tienda  ?? 0;
+    const stockCocinaAntes  = prod?.stock_cocina  ?? 0;
+    const stockGeneralAntes = prod?.stock_general ?? 0;
+    const nuevoStockTienda  = Math.max(0, stockTiendaAntes - cantidad);
+
+    const { error: errUpdate } = await db
+      .from('productos')
+      .update({ stock_tienda: nuevoStockTienda })
+      .eq('id', productoId);
+    if (errUpdate) throw errUpdate;
+
+    await db.from('movimientos_almacen').insert({
+      producto_id:            productoId,
+      tipo:                   'salida_cocina',
+      zona_origen:            'tienda',
+      zona_destino:           null,
+      cantidad,
+      stock_tienda_antes:     stockTiendaAntes,
+      stock_cocina_antes:     stockCocinaAntes,
+      stock_general_antes:    stockGeneralAntes,
+      stock_tienda_despues:   nuevoStockTienda,
+      stock_cocina_despues:   stockCocinaAntes,
+      stock_general_despues:  stockGeneralAntes,
+      referencia_id:          data.id,
+      usuario_id:             usuarioId,
+      observacion:            `Porcionado: ${notas ?? `${cantidad} ${unidad}`}`,
+    });
+  }
 
   return data as ProduccionCocina;
 }
@@ -620,9 +756,6 @@ export async function ajustarStockInsumo(
 
 // ════════════════════════════════════════════════════════════════════════════
 // USUARIOS
-// ── FIX: JOIN directo — elimina la segunda query separada de cajas ─────────
-// ANTES: 2 queries (usuarios + cajas por separado con un Map)
-// AHORA: 1 query con LEFT JOIN usando la FK correcta
 // ════════════════════════════════════════════════════════════════════════════
 
 export async function getUsuarios(): Promise<Usuario[]> {
@@ -630,7 +763,7 @@ export async function getUsuarios(): Promise<Usuario[]> {
     .from('usuarios')
     .select(`
       *,
-      caja:cajas!cajas_usuario_id_fkey(id, nombre, estado)
+      caja:cajas!fk_usuarios_caja(id, nombre, estado)
     `)
     .order('nombre');
   if (error) throw error;
@@ -703,17 +836,32 @@ export interface MetricasDashboard {
 
 export async function getMetricasDashboard(): Promise<MetricasDashboard> {
   const [ventasRes, insumosRes] = await Promise.all([
-    supabase.from('v_ventas_hoy').select('total, id'),
-    supabase.from('v_resumen_stock').select('alerta_cocina').eq('alerta_cocina', true),
+    db.from('v_ventas_hoy').select('id, total'),
+    db.from('v_resumen_stock').select('alerta_cocina').eq('alerta_cocina', true),
   ]);
 
-  const ventas      = (ventasRes.data ?? []) as Array<{ total: number; id: string }>;
+  if (ventasRes.error) throw ventasRes.error;
+  if (insumosRes.error) throw insumosRes.error;
+
+  const ventas      = (ventasRes.data ?? []) as Array<{ id: string; total: number }>;
   const totalVentas = ventas.reduce((s, v) => s + (v.total ?? 0), 0);
+  const ids         = ventas.map(v => v.id);
+
+  let productosVendidos = 0;
+  if (ids.length > 0) {
+    const { data: items, error: errItems } = await db
+      .from('venta_items')
+      .select('cantidad')
+      .in('venta_id', ids);
+    if (errItems) throw errItems;
+    productosVendidos = ((items ?? []) as Array<{ cantidad: number }>)
+      .reduce((s, i) => s + (i.cantidad ?? 0), 0);
+  }
 
   return {
     ventasHoy:         totalVentas,
     transacciones:     ventas.length,
-    productosVendidos: 0,
+    productosVendidos,
     ticketPromedio:    ventas.length > 0 ? totalVentas / ventas.length : 0,
     insumosConAlerta:  (insumosRes.data ?? []).length,
   };

@@ -1,24 +1,4 @@
 // context/GlobalDataContext.tsx
-// ============================================================
-// CAMBIOS RESPECTO A LA VERSIÓN ANTERIOR:
-//
-//   ✅ Realtime real: los eventos ahora aplican el diff directo
-//      al estado local en vez de hacer refetch completo.
-//      - mesas     → INSERT/UPDATE/DELETE directo en estado
-//      - ventas    → INSERT agrega al inicio, UPDATE parchea
-//      - notifs    → INSERT agrega al inicio (filtrado por usuario)
-//      - usuarios  → UPDATE parchea, resto hace refetch
-//      - pedidos   → sigue con refetch (es una vista JOIN compleja)
-//
-//   ✅ usuarioActual eliminado de este contexto: ahora se lee
-//      desde AuthContext para evitar query y suscripción duplicados.
-//      IMPORTANTE: GlobalDataProvider debe estar dentro de AuthProvider.
-//
-//   ✅ Carga inicial lazy: setIsLoading(false) después de solo
-//      mesas + ventas (lo que el usuario ve primero).
-//      El resto carga en segundo plano sin bloquear la UI.
-// ============================================================
-
 'use client';
 
 import React, {
@@ -31,45 +11,49 @@ import {
   getVentasHoy, getVentasRecientes, getVentasSemana,
   getComprobantes, getCompras, getUsuarios,
   getProduccionHoy, getNotificacionesSinLeer,
-  getMetricasDashboard, type MetricasDashboard,
+  getMetricasDashboard, getTopProductosHoy,
+  type MetricasDashboard, type TopProductoHoy,
 } from '@/lib/supabase/queries';
 import type {
-  Producto, Mesa, Cliente, Caja, Venta,
+  Mesa, Cliente, Caja, Venta,
   Compra, ProduccionCocina, Usuario, Notificacion,
 } from '@/lib/supabase/types';
+import type { Producto as Producto } from '@/lib/supabase/types';
 import { supabase } from '@/lib/supabase/client';
 
 type ComprobanteDetalle = Awaited<ReturnType<typeof getComprobantes>>[number];
 
 interface GlobalDataContextType {
-  productos:          Producto[];
-  mesas:              Mesa[];
-  clientes:           Cliente[];
-  cajas:              Caja[];
-  ventasHoy:          Venta[];
-  ventasRecientes:    Venta[];
-  ventasSemana:       Array<{ total: number; fecha_local: string }>;
-  comprobantes:       ComprobanteDetalle[];
-  compras:            Compra[];
-  produccionHoy:      ProduccionCocina[];
-  usuarios:           Usuario[];
-  notificaciones:     Notificacion[];
-  metricas:           MetricasDashboard | null;
-  isLoading:          boolean;
-  isLoadingComplete:  boolean;
-  refetchProductos:       () => Promise<void>;
-  refetchMesas:           () => Promise<void>;
-  refetchClientes:        () => Promise<void>;
-  refetchCajas:           () => Promise<void>;
-  refetchVentas:          () => Promise<void>;
-  refetchVentasRecientes: () => Promise<void>;
-  refetchComprobantes:    () => Promise<void>;
-  refetchCompras:         () => Promise<void>;
-  refetchProduccion:      () => Promise<void>;
-  refetchUsuarios:        () => Promise<void>;
-  refetchNotificaciones:  () => Promise<void>;
-  refetchMetricas:        () => Promise<void>;
-  refetchAll:             () => Promise<void>;
+  productos:           Producto[];
+  mesas:               Mesa[];
+  clientes:            Cliente[];
+  cajas:               Caja[];
+  ventasHoy:           Venta[];
+  ventasRecientes:     Venta[];
+  ventasSemana:        Array<{ total: number; fecha_local: string }>;
+  comprobantes:        ComprobanteDetalle[];
+  compras:             Compra[];
+  produccionHoy:       ProduccionCocina[];
+  usuarios:            Usuario[];
+  notificaciones:      Notificacion[];
+  metricas:            MetricasDashboard | null;
+  topProductosHoy:     TopProductoHoy[];
+  isLoading:           boolean;
+  isLoadingComplete:   boolean;
+  refetchProductos:        () => Promise<void>;
+  refetchMesas:            () => Promise<void>;
+  refetchClientes:         () => Promise<void>;
+  refetchCajas:            () => Promise<void>;
+  refetchVentas:           () => Promise<void>;
+  refetchVentasRecientes:  () => Promise<void>;
+  refetchComprobantes:     () => Promise<void>;
+  refetchCompras:          () => Promise<void>;
+  refetchProduccion:       () => Promise<void>;
+  refetchUsuarios:         () => Promise<void>;
+  refetchNotificaciones:   () => Promise<void>;
+  refetchMetricas:         () => Promise<void>;
+  refetchTopProductos:     () => Promise<void>;
+  refetchAll:              () => Promise<void>;
 }
 
 const GlobalDataContext = createContext<GlobalDataContextType | null>(null);
@@ -82,23 +66,23 @@ export function useGlobalData() {
 
 export function GlobalDataProvider({ children }: { children: React.ReactNode }) {
   // ── Estado ────────────────────────────────────────────────────────────────
-  const [productos,       setProductos]       = useState<Producto[]>([]);
-  const [mesas,           setMesas]           = useState<Mesa[]>([]);
-  const [clientes,        setClientes]        = useState<Cliente[]>([]);
-  const [cajas,           setCajas]           = useState<Caja[]>([]);
-  const [ventasHoy,       setVentasHoy]       = useState<Venta[]>([]);
-  const [ventasRecientes, setVentasRecientes] = useState<Venta[]>([]);
-  const [ventasSemana,    setVentasSemana]    = useState<Array<{ total: number; fecha_local: string }>>([]);
-  const [comprobantes,    setComprobantes]    = useState<ComprobanteDetalle[]>([]);
-  const [compras,         setCompras]         = useState<Compra[]>([]);
-  const [produccionHoy,   setProduccionHoy]   = useState<ProduccionCocina[]>([]);
-  const [usuarios,        setUsuarios]        = useState<Usuario[]>([]);
-  const [notificaciones,  setNotificaciones]  = useState<Notificacion[]>([]);
-  const [metricas,        setMetricas]        = useState<MetricasDashboard | null>(null);
-  const [isLoading,         setIsLoading]         = useState(true);
-  const [isLoadingComplete, setIsLoadingComplete] = useState(false);
+  const [productos,        setProductos]        = useState<Producto[]>([]);
+  const [mesas,            setMesas]            = useState<Mesa[]>([]);
+  const [clientes,         setClientes]         = useState<Cliente[]>([]);
+  const [cajas,            setCajas]            = useState<Caja[]>([]);
+  const [ventasHoy,        setVentasHoy]        = useState<Venta[]>([]);
+  const [ventasRecientes,  setVentasRecientes]  = useState<Venta[]>([]);
+  const [ventasSemana,     setVentasSemana]     = useState<Array<{ total: number; fecha_local: string }>>([]);
+  const [comprobantes,     setComprobantes]     = useState<ComprobanteDetalle[]>([]);
+  const [compras,          setCompras]          = useState<Compra[]>([]);
+  const [produccionHoy,    setProduccionHoy]    = useState<ProduccionCocina[]>([]);
+  const [usuarios,         setUsuarios]         = useState<Usuario[]>([]);
+  const [notificaciones,   setNotificaciones]   = useState<Notificacion[]>([]);
+  const [metricas,         setMetricas]         = useState<MetricasDashboard | null>(null);
+  const [topProductosHoy,  setTopProductosHoy]  = useState<TopProductoHoy[]>([]);
+  const [isLoading,          setIsLoading]          = useState(true);
+  const [isLoadingComplete,  setIsLoadingComplete]  = useState(false);
 
-  // ── usuarioActual viene de AuthContext (ya no duplicamos aquí) ────────────
   const { usuario: usuarioActual } = useAuth();
   const usuarioActualRef = useRef<typeof usuarioActual>(null);
   useEffect(() => { usuarioActualRef.current = usuarioActual; }, [usuarioActual]);
@@ -113,8 +97,15 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
 
   const refetchMesas = useCallback(async () => {
     try {
+      const data = await getMesasConPedido();
+      const seen = new Set<string>();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      setMesas((await getMesasConPedido()) as any[]);
+      const unicas = (data as any[]).filter((m: { id: string }) => {
+        if (seen.has(m.id)) return false;
+        seen.add(m.id);
+        return true;
+      });
+      setMesas(unicas);
     }
     catch (e) { console.error('mesas:', e); }
   }, []);
@@ -154,6 +145,11 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('metricas:', e); }
   }, []);
 
+  const refetchTopProductos = useCallback(async () => {
+    try { setTopProductosHoy(await getTopProductosHoy()); }
+    catch (e) { console.error('topProductos:', e); }
+  }, []);
+
   const refetchVentas = useCallback(async () => {
     try {
       const [hoy, semana] = await Promise.all([getVentasHoy(), getVentasSemana()]);
@@ -175,28 +171,24 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   }, []);
 
   // ── Carga lazy por fases ───────────────────────────────────────────────────
-  // Fase 1: solo lo que el usuario ve en los primeros 2 segundos.
-  // Fase 2 y 3: sin await, cargan en segundo plano.
   const refetchAll = useCallback(async () => {
     setIsLoading(true);
     setIsLoadingComplete(false);
 
-    // Fase 1 — mesas y ventas desbloquean la UI principal
     await Promise.allSettled([
       refetchMesas(),
       refetchVentas(),
     ]);
-    setIsLoading(false); // ← UI usable aquí
+    setIsLoading(false);
 
-    // Fase 2 — sin await, no bloquea el render
     Promise.allSettled([
       refetchProductos(),
       refetchVentasRecientes(),
       refetchClientes(),
       refetchCajas(),
       refetchMetricas(),
+      refetchTopProductos(),
     ]).then(() => {
-      // Fase 3 — menos urgente
       Promise.allSettled([
         refetchComprobantes(),
         refetchCompras(),
@@ -207,38 +199,78 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   }, [
     refetchMesas, refetchVentas,
     refetchProductos, refetchVentasRecientes, refetchClientes,
-    refetchCajas, refetchMetricas, refetchComprobantes,
-    refetchCompras, refetchProduccion, refetchUsuarios,
+    refetchCajas, refetchMetricas, refetchTopProductos,
+    refetchComprobantes, refetchCompras, refetchProduccion, refetchUsuarios,
   ]);
 
-  // ── Carga inicial (una sola vez, evita doble en StrictMode) ───────────────
+  // ── Carga inicial (una sola vez) ───────────────────────────────────────────
   useEffect(() => {
     if (cargaIniciadaRef.current) return;
-    cargaIniciadaRef.current = true;
-    const id = setTimeout(() => { refetchAll(); }, 0);
-    return () => clearTimeout(id);
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (session && !cargaIniciadaRef.current) {
+        cargaIniciadaRef.current = true;
+        refetchAll();
+      }
+      if (event === 'SIGNED_OUT') {
+        cargaIniciadaRef.current = false;
+      }
+    });
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session && !cargaIniciadaRef.current) {
+        cargaIniciadaRef.current = true;
+        refetchAll();
+      }
+    });
+
+    return () => subscription.unsubscribe();
   }, [refetchAll]);
 
   // ── Refs estables para el canal Realtime ──────────────────────────────────
-  // Usamos refs para no re-suscribir el canal cuando cambian las funciones
-  const refetchMesasRef          = useRef(refetchMesas);
-  const refetchNotificacionesRef = useRef(refetchNotificaciones);
-  const refetchUsuariosRef       = useRef(refetchUsuarios);
+  const refetchProductosRef       = useRef(refetchProductos);       // ← FIX: ref para productos
+  const refetchMesasRef           = useRef(refetchMesas);
+  const refetchNotificacionesRef  = useRef(refetchNotificaciones);
+  const refetchUsuariosRef        = useRef(refetchUsuarios);
+  const refetchClientesRef        = useRef(refetchClientes);
+  const refetchCajasRef           = useRef(refetchCajas);
+  const refetchComprobantesRef    = useRef(refetchComprobantes);
+  const refetchTopProductosRef    = useRef(refetchTopProductos);
+  const refetchVentasRef          = useRef(refetchVentas);
+  const refetchVentasRecientesRef = useRef(refetchVentasRecientes);
+  const refetchMetricasRef        = useRef(refetchMetricas);
 
-  useEffect(() => { refetchMesasRef.current          = refetchMesas;          }, [refetchMesas]);
-  useEffect(() => { refetchNotificacionesRef.current = refetchNotificaciones; }, [refetchNotificaciones]);
-  useEffect(() => { refetchUsuariosRef.current       = refetchUsuarios;       }, [refetchUsuarios]);
+  useEffect(() => { refetchProductosRef.current       = refetchProductos;       }, [refetchProductos]);  // ← FIX
+  useEffect(() => { refetchMesasRef.current           = refetchMesas;           }, [refetchMesas]);
+  useEffect(() => { refetchNotificacionesRef.current  = refetchNotificaciones;  }, [refetchNotificaciones]);
+  useEffect(() => { refetchUsuariosRef.current        = refetchUsuarios;        }, [refetchUsuarios]);
+  useEffect(() => { refetchClientesRef.current        = refetchClientes;        }, [refetchClientes]);
+  useEffect(() => { refetchCajasRef.current           = refetchCajas;           }, [refetchCajas]);
+  useEffect(() => { refetchComprobantesRef.current    = refetchComprobantes;    }, [refetchComprobantes]);
+  useEffect(() => { refetchTopProductosRef.current    = refetchTopProductos;    }, [refetchTopProductos]);
+  useEffect(() => { refetchVentasRef.current          = refetchVentas;          }, [refetchVentas]);
+  useEffect(() => { refetchVentasRecientesRef.current = refetchVentasRecientes; }, [refetchVentasRecientes]);
+  useEffect(() => { refetchMetricasRef.current        = refetchMetricas;        }, [refetchMetricas]);
 
-  // ── Realtime — diff directo al estado, sin refetch salvo excepciones ───────
+  // ── Canal Realtime único ──────────────────────────────────────────────────
   useEffect(() => {
     const canal = supabase
       .channel('global-realtime')
 
-      // ── MESAS: diff directo ──────────────────────────────────────────────
-      // La tabla mesas solo tiene campos simples (estado, nombre, zona).
-      // Podemos aplicar el cambio directo sin ir al servidor.
-      // EXCEPCIÓN: si cambia un PEDIDO (que es parte del JOIN en v_mesas_con_pedido),
-      // ahí sí necesitamos refetch porque el payload de mesas no incluye pedido_activo.
+      // ── PRODUCTOS → refetch cuando BD descuenta/restaura stock ───────────
+      // El trigger de BD modifica stock_tienda directamente en la tabla,
+      // por eso necesitamos escuchar UPDATE aquí para reflejar el cambio.
+      // Requiere: ALTER PUBLICATION supabase_realtime ADD TABLE public.productos;
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'productos' },
+        () => refetchProductosRef.current()
+      )
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'productos' },
+        () => refetchProductosRef.current()
+      )
+
+      // ── MESAS ────────────────────────────────────────────────────────────
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'mesas' },
         (payload) => {
@@ -249,59 +281,36 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       )
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'mesas' },
-        (payload) => {
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          setMesas(prev => [...prev, payload.new as any]);
-        }
+        () => refetchMesasRef.current()
       )
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'mesas' },
-        (payload) => {
-          setMesas(prev => prev.filter(m => m.id !== payload.old.id));
-        }
+        (payload) => { setMesas(prev => prev.filter(m => m.id !== payload.old.id)); }
       )
 
-      // ── PEDIDOS: refetch de mesas ────────────────────────────────────────
-      // El payload de pedidos no incluye los campos de la vista (mozo, minutos_ocupada, etc.)
-      // Necesitamos refetch para tener la vista completa actualizada.
+      // ── PEDIDOS → refetch mesas ──────────────────────────────────────────
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'pedidos' },
         () => refetchMesasRef.current()
       )
 
-      // ── VENTAS INSERT: agregar al inicio de las listas ───────────────────
+      // ── VENTAS INSERT ────────────────────────────────────────────────────
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'ventas' },
         (payload) => {
           const nueva = payload.new as Venta;
-
-          // Agregar a ventas de hoy (si es de hoy en Lima)
           const hoyLima = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
           if (nueva.fecha_local === hoyLima && nueva.estado === 'completada') {
             setVentasHoy(prev => [nueva, ...prev]);
           }
-
-          // Agregar a recientes (máx 10)
           if (nueva.estado === 'completada') {
-            setVentasRecientes(prev => [nueva, ...prev.slice(0, 9)]);
+            // ← CAMBIO: refetch con delay para que el trigger de comprobante termine
+            setTimeout(() => {
+              refetchVentasRecientesRef.current();
+              refetchMetricasRef.current();
+              refetchTopProductosRef.current();
+            }, 800);
           }
-
-          // Actualizar métricas sin hacer query
-          if (nueva.estado === 'completada') {
-            setMetricas(prev => {
-              if (!prev) return prev;
-              const nuevoTotal       = prev.ventasHoy + (nueva.total ?? 0);
-              const nuevasTransacc   = prev.transacciones + 1;
-              return {
-                ...prev,
-                ventasHoy:      nuevoTotal,
-                transacciones:  nuevasTransacc,
-                ticketPromedio: nuevasTransacc > 0 ? nuevoTotal / nuevasTransacc : 0,
-              };
-            });
-          }
-
-          // ventas de semana: agregar
           setVentasSemana(prev => [
             ...prev,
             { total: nueva.total ?? 0, fecha_local: nueva.fecha_local },
@@ -309,27 +318,42 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         }
       )
 
-      // ── VENTAS UPDATE: parchear en estado ────────────────────────────────
+      // ── VENTAS UPDATE (anulación) ─────────────────────────────────────────
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'ventas' },
         (payload) => {
           const actualizada = payload.new as Venta;
+
           setVentasHoy(prev =>
             prev.map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v)
           );
           setVentasRecientes(prev =>
             prev.map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v)
           );
-          // Si fue anulada, re-calcular métricas desde el estado actual
-          // (más simple y seguro que intentar deshacer el cálculo incremental)
+
           if (actualizada.estado === 'anulada') {
+            // Refetch completo con delay para que los triggers de BD terminen
+            setTimeout(() => {
+              Promise.allSettled([
+                refetchVentasRef.current(),
+                refetchVentasRecientesRef.current(),
+                refetchMetricasRef.current(),
+                refetchTopProductosRef.current(),
+                refetchComprobantesRef.current(),   // ← FIX: actualiza página comprobantes
+                refetchProductosRef.current(),      // ← FIX: restaura stock en catálogo
+              ]);
+            }, 500);
+
+            // Actualización optimista inmediata de métricas
             setVentasHoy(prev => {
-              const ventasActivas = prev.filter(v => v.estado === 'completada');
+              const ventasActivas = prev
+                .map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v)
+                .filter(v => v.estado === 'completada');
               const total = ventasActivas.reduce((s, v) => s + (v.total ?? 0), 0);
               setMetricas(m => m ? {
                 ...m,
-                ventasHoy:     total,
-                transacciones: ventasActivas.length,
+                ventasHoy:      total,
+                transacciones:  ventasActivas.length,
                 ticketPromedio: ventasActivas.length > 0 ? total / ventasActivas.length : 0,
               } : m);
               return prev.map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v);
@@ -338,31 +362,74 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         }
       )
 
-      // ── NOTIFICACIONES: agregar al inicio ────────────────────────────────
+      // ── NOTIFICACIONES ───────────────────────────────────────────────────
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notificaciones' },
         (payload) => {
           const uid   = usuarioActualRef.current?.id;
           const notif = payload.new as Notificacion;
-          // Solo agregar si es para este usuario o es broadcast (usuario_id null)
           if (!notif.usuario_id || notif.usuario_id === uid) {
             setNotificaciones(prev => [notif, ...prev.slice(0, 19)]);
           }
         }
       )
 
-      // ── USUARIOS: diff directo en UPDATE, refetch en resto ───────────────
+      // ── CLIENTES ─────────────────────────────────────────────────────────
       .on('postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'usuarios' },
+        { event: 'UPDATE', schema: 'public', table: 'clientes' },
         (payload) => {
-          setUsuarios(prev =>
-            prev.map(u => u.id === payload.new.id ? { ...u, ...payload.new } : u)
+          setClientes(prev =>
+            prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c)
           );
         }
       )
       .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'clientes' },
+        () => refetchClientesRef.current()
+      )
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'clientes' },
+        (payload) => {
+          setClientes(prev => prev.filter(c => c.id !== payload.old.id));
+        }
+      )
+
+      // ── CAJAS ────────────────────────────────────────────────────────────
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'cajas' },
+        (payload) => {
+          setCajas(prev =>
+            prev.map(c => c.id === payload.new.id ? { ...c, ...payload.new } : c)
+          );
+          refetchUsuariosRef.current();
+        }
+      )
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'cajas' },
+          () => {
+          refetchCajasRef.current();
+          refetchUsuariosRef.current(); // ← AGREGAR
+        }
+      )
+      .on('postgres_changes',
+        { event: 'DELETE', schema: 'public', table: 'cajas' },
+        (payload) => {
+          setCajas(prev => prev.filter(c => c.id !== payload.old.id));
+          refetchUsuariosRef.current(); // ← AGREGAR
+        }
+      )
+
+      // ── USUARIOS ─────────────────────────────────────────────────────────
+      .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'usuarios' },
         () => refetchUsuariosRef.current()
+      )
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'usuarios' },
+          () => {
+            refetchUsuariosRef.current();
+            refetchCajasRef.current(); // ← AGREGAR
+          }
       )
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'usuarios' },
@@ -371,30 +438,40 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         }
       )
 
+      // ── COMPROBANTES ─────────────────────────────────────────────────────
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'comprobantes' },
+        () => refetchComprobantesRef.current()
+      )
+
       .subscribe();
 
     return () => { supabase.removeChannel(canal); };
-  }, []); // sin dependencias: el canal se crea una sola vez
+  }, []);
 
   // ── Valor del contexto ────────────────────────────────────────────────────
   const value = useMemo<GlobalDataContextType>(() => ({
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana,
-    comprobantes, compras, produccionHoy, usuarios, notificaciones, metricas,
+    comprobantes, compras, produccionHoy, usuarios, notificaciones,
+    metricas, topProductosHoy,
     isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
     refetchVentas, refetchVentasRecientes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,
-    refetchNotificaciones, refetchMetricas, refetchAll,
+    refetchNotificaciones, refetchMetricas, refetchTopProductos,
+    refetchAll,
   }), [
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana,
-    comprobantes, compras, produccionHoy, usuarios, notificaciones, metricas,
+    comprobantes, compras, produccionHoy, usuarios, notificaciones,
+    metricas, topProductosHoy,
     isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
     refetchVentas, refetchVentasRecientes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,
-    refetchNotificaciones, refetchMetricas, refetchAll,
+    refetchNotificaciones, refetchMetricas, refetchTopProductos,
+    refetchAll,
   ]);
 
   return (

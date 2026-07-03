@@ -85,19 +85,19 @@ export function KpiCard({ label, value, sub, icon: Icon, color, trend }: KpiCard
   const up = trend !== undefined && trend >= 0;
   return (
     <Card>
-      <div className="flex items-start justify-between mb-3">
-        <div>
-          <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: B.muted }}>
+      <div className="flex items-start justify-between gap-2 mb-3">
+        <div className="min-w-0">
+          <p className="text-[9px] sm:text-[10px] font-black uppercase tracking-wide sm:tracking-widest" style={{ color: B.muted }}>
             {label}
           </p>
-          <p className="text-2xl font-bold mt-0.5" style={{ color: B.charcoal }}>{value}</p>
+          <p className="text-xl sm:text-2xl font-bold mt-0.5" style={{ color: B.charcoal }}>{value}</p>
           {sub && <p className="text-xs mt-0.5" style={{ color: B.muted }}>{sub}</p>}
         </div>
         <div
-          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+          className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl flex items-center justify-center shrink-0"
           style={{ background: `${color}18` }}
         >
-          <Icon className="w-5 h-5" style={{ color }} />
+          <Icon className="w-4 h-4 sm:w-5 sm:h-5" style={{ color }} />
         </div>
       </div>
       {trend !== undefined && (
