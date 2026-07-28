@@ -1,7 +1,7 @@
 //components/ui/index.tsx
 import React from 'react';
 import type { LucideIcon } from 'lucide-react';
-import { ArrowUpRight, ArrowDownRight } from 'lucide-react';
+import { ArrowUpRight, ArrowDownRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { B } from '@/lib/brand';
 
 // ─── Card ─────────────────────────────────────────────────────────────────────
@@ -146,6 +146,47 @@ export function ProgressBar({ pct, color = B.green, height = 6 }: ProgressBarPro
         className="h-full rounded-full transition-all"
         style={{ width: `${Math.min(pct, 100)}%`, background: color }}
       />
+    </div>
+  );
+}
+
+// ─── Paginacion ─────────────────────────────────────────────────────────────
+interface PaginacionProps {
+  page: number;         // página actual (1-indexed)
+  totalPages: number;
+  onChange: (page: number) => void;
+  totalItems?: number;
+  pageSize?: number;
+}
+export function Paginacion({ page, totalPages, onChange, totalItems, pageSize }: PaginacionProps) {
+  if (totalPages <= 1) return null;
+
+  const desde = totalItems && pageSize ? (page - 1) * pageSize + 1 : null;
+  const hasta = totalItems && pageSize ? Math.min(page * pageSize, totalItems) : null;
+
+  return (
+    <div className="flex items-center justify-between px-4 py-3 flex-wrap gap-2"
+      style={{ borderTop: `1px solid ${B.cream}` }}>
+      {desde !== null && hasta !== null && totalItems !== undefined ? (
+        <p className="text-xs" style={{ color: B.muted }}>
+          Mostrando <span className="font-semibold">{desde}–{hasta}</span> de <span className="font-semibold">{totalItems}</span>
+        </p>
+      ) : <span />}
+      <div className="flex items-center gap-1">
+        <button onClick={() => onChange(Math.max(1, page - 1))} disabled={page === 1}
+          className="p-1.5 rounded-lg disabled:opacity-30"
+          style={{ background: B.cream, color: B.charcoal }}>
+          <ChevronLeft className="w-4 h-4" />
+        </button>
+        <span className="text-xs font-bold px-2" style={{ color: B.charcoal }}>
+          {page} / {totalPages}
+        </span>
+        <button onClick={() => onChange(Math.min(totalPages, page + 1))} disabled={page === totalPages}
+          className="p-1.5 rounded-lg disabled:opacity-30"
+          style={{ background: B.cream, color: B.charcoal }}>
+          <ChevronRight className="w-4 h-4" />
+        </button>
+      </div>
     </div>
   );
 }

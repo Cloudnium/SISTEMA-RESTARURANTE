@@ -1,4 +1,4 @@
-// componentes/insumos/InsumosView.tsx esto es productos
+// componentes/insumos/InsumosView.tsx
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';
@@ -7,7 +7,7 @@ import {
   BarChart3, Calendar, TrendingDown, TrendingUp, Filter,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
-import { Card, PageHeader, Btn, ProgressBar } from '@/components/ui';
+import { Card, PageHeader, Btn, ProgressBar, Paginacion } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { crearProducto, actualizarProducto, ajustarStockInsumo } from '@/lib/supabase/queries';
@@ -291,23 +291,32 @@ function ModalHistorial({ onClose }: {
   const [periodo,     setPeriodo]     = useState<PeriodoFiltro>('hoy');
   const [tipoFiltro,  setTipoFiltro]  = useState<TipoFiltro>('todos');
   const [insumoBusc,  setInsumoBusc]  = useState('');
+  const [paginaHist,  setPaginaHist]  = useState(1);
+  const POR_PAGINA_HIST = 20;
 
   const cargar = useCallback(() => {
     // Diferir para evitar setState síncrono en el effect
     setTimeout(async () => {
       setCargando(true);
       try {
-      // Calcular fecha inicio según período
-      const ahora = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Lima' }));
+      // Calcular fecha inicio según período, en zona horaria de Lima directamente
+      // (evita el bug de convertir a UTC: Lima es UTC-5, así que pasadas las
+      // 19:00 hora Lima, .toISOString() ya devuelve la fecha del día siguiente)
+      const fmtLima = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima', year: 'numeric', month: '2-digit', day: '2-digit' });
+      const hoyLimaStr = fmtLima.format(new Date()); // "YYYY-MM-DD" en hora Lima
+      const [yLima, mLima, dLima] = hoyLimaStr.split('-').map(Number);
+      const hoyLimaUTC = new Date(Date.UTC(yLima, mLima - 1, dLima)); // fecha "pura" para operar días
+
       let fechaInicio: string;
       if (periodo === 'hoy') {
-        fechaInicio = ahora.toISOString().split('T')[0];
+        fechaInicio = hoyLimaStr;
       } else if (periodo === 'semana') {
-        const lunes = new Date(ahora);
-        lunes.setDate(ahora.getDate() - (ahora.getDay() === 0 ? 6 : ahora.getDay() - 1));
+        const diaSemana = hoyLimaUTC.getUTCDay();
+        const lunes = new Date(hoyLimaUTC);
+        lunes.setUTCDate(hoyLimaUTC.getUTCDate() - (diaSemana === 0 ? 6 : diaSemana - 1));
         fechaInicio = lunes.toISOString().split('T')[0];
       } else {
-        fechaInicio = `${ahora.getFullYear()}-${String(ahora.getMonth() + 1).padStart(2, '0')}-01`;
+        fechaInicio = `${yLima}-${String(mLima).padStart(2, '0')}-01`;
       }
 
       // Consultar movimientos_almacen filtrando por tipo consumo/ajuste en cocina
@@ -328,7 +337,7 @@ function ModalHistorial({ onClose }: {
           usuario:usuarios(nombre)
         `)
         .in('tipo', ['ajuste', 'salida_cocina', 'traslado'])
-        .gte('created_at', `${fechaInicio}T00:00:00`)
+        .gte('created_at', `${fechaInicio}T00:00:00-05:00`)
         .order('created_at', { ascending: false })
         .limit(200);
 
@@ -382,6 +391,14 @@ function ModalHistorial({ onClose }: {
     const matchInsumo = !insumoBusc || h.producto_nombre.toLowerCase().includes(insumoBusc.toLowerCase());
     return matchTipo && matchInsumo;
   }), [historial, tipoFiltro, insumoBusc]);
+
+  const [prevHistKey, setPrevHistKey] = useState(`${tipoFiltro}|${insumoBusc}|${periodo}`);
+  const histKey = `${tipoFiltro}|${insumoBusc}|${periodo}`;
+  if (histKey !== prevHistKey) { setPrevHistKey(histKey); setPaginaHist(1); }
+
+  const totalPaginasHist = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA_HIST));
+  const paginaHistSegura = Math.min(paginaHist, totalPaginasHist);
+  const visiblesHist = filtrados.slice((paginaHistSegura - 1) * POR_PAGINA_HIST, paginaHistSegura * POR_PAGINA_HIST);
 
   const totalConsumo = filtrados.filter(h => h.delta < 0).reduce((s, h) => s + Math.abs(h.delta), 0);
   const totalIngreso = filtrados.filter(h => h.delta > 0).reduce((s, h) => s + h.delta, 0);
@@ -493,7 +510,7 @@ function ModalHistorial({ onClose }: {
                 </tr>
               </thead>
               <tbody>
-                {filtrados.map(h => {
+                {visiblesHist.map(h => {
                   const esConsumo = h.delta < 0;
                   return (
                     <tr key={h.id} style={{ borderTop: `1px solid ${B.cream}` }}
@@ -521,6 +538,8 @@ function ModalHistorial({ onClose }: {
             </table>
           )}
         </div>
+        <Paginacion page={paginaHistSegura} totalPages={totalPaginasHist} onChange={setPaginaHist}
+          totalItems={filtrados.length} pageSize={POR_PAGINA_HIST} />
       </div>
     </div>
   );
@@ -531,6 +550,8 @@ export default function InsumosView() {
   const { productos, isLoading, refetchProductos } = useGlobalData();
   const [busqueda,      setBusqueda]      = useState('');
   const [catFiltro,     setCatFiltro]     = useState('Todos');
+  const [pagina,        setPagina]        = useState(1);
+  const POR_PAGINA = 20;
   const [modal,         setModal]         = useState<{ open: boolean; insumo: Producto | null }>({ open: false, insumo: null });
   const [modalConsumo,  setModalConsumo]  = useState<Producto | null>(null);
   const [modalHistorial,setModalHistorial]= useState(false);
@@ -558,6 +579,14 @@ export default function InsumosView() {
     const matchC = catFiltro === 'Todos' || i.categoria === catFiltro;
     return matchQ && matchC;
   }), [insumos, busqueda, catFiltro]);
+
+  const [prevFiltroKey, setPrevFiltroKey] = useState(`${busqueda}|${catFiltro}`);
+  const filtroKey = `${busqueda}|${catFiltro}`;
+  if (filtroKey !== prevFiltroKey) { setPrevFiltroKey(filtroKey); setPagina(1); }
+
+  const totalPaginas = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA));
+  const paginaSegura = Math.min(pagina, totalPaginas);
+  const visibles = filtrados.slice((paginaSegura - 1) * POR_PAGINA, paginaSegura * POR_PAGINA);
 
   const valorTotal = insumos.reduce((a, i) => a + i.stock_tienda * i.precio, 0);
 
@@ -635,7 +664,7 @@ export default function InsumosView() {
             </tr>
           </thead>
           <tbody>
-            {filtrados.map(ins => {
+            {visibles.map(ins => {
               const low = ins.stock_tienda < ins.stock_minimo_tienda;
               const pct = Math.min((ins.stock_tienda / Math.max(ins.stock_minimo_tienda * 3, 1)) * 100, 100);
               return (
@@ -686,6 +715,8 @@ export default function InsumosView() {
             {insumos.length === 0 ? 'Sin productos registrados aún' : 'No hay resultados'}
           </div>
         )}
+        <Paginacion page={paginaSegura} totalPages={totalPaginas} onChange={setPagina}
+          totalItems={filtrados.length} pageSize={POR_PAGINA} />
       </div>
 
       {/* Modales */}
