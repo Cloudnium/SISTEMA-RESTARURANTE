@@ -15,8 +15,8 @@ interface SidebarProps {
   userName?: string;
 }
 
-const OCULTO_CAJERO   = ['dashboard', 'reportes', 'usuarios', 'respaldo'];
-const OCULTO_COCINERO = ['cajas', 'compras', 'reportes', 'usuarios', 'respaldo', 'comprobantes'];
+const OCULTO_CAJERO   = ['dashboard', 'reportes', 'usuarios', 'respaldo', 'cocina'];
+const OCULTO_COCINERO = ['dashboard', 'venta-mesa', 'ventas', 'cajas', 'reportes', 'usuarios', 'respaldo', 'comprobantes'];
 
 const ROL_LABEL: Record<string, string> = {
   admin:    'Administrador',

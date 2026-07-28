@@ -6,7 +6,7 @@ import React, { useState } from 'react';
 import AppShell from '@/components/shared/AppShell';
 import DashboardView from '@/components/dashboard/DashboardView';
 import MesasView from '@/components/mesas/MesasView';
-import ProduccionView from '@/components/produccion/ProduccionView';
+import CocinaView from '@/components/cocina/CocinaView';
 import InsumosView from '@/components/insumos/InsumosView';
 import ReportesView from '@/components/reportes/ReportesView';
 import PlaceholderView from '@/components/shared/Placeholderview';
@@ -24,6 +24,7 @@ import AuthGuard from '@/components/auth/AuthGuard';
 import VentaMesaView from '@/components/ventamesa/VentaMesaView';
 
 const SOLO_ADMIN = ['dashboard', 'reportes', 'usuarios', 'respaldo'];
+const VETADO_CAJERO = [...SOLO_ADMIN, 'cocina']; // Cocina es de cocinero + admin, no de cajero
 
 // ─── Resolve label for placeholder pages ──────────────────────────────────────
 function getLabelById(id: string): string {
@@ -42,7 +43,7 @@ function renderView(active: string): React.ReactNode {
     case 'ventas':      return <VentasView />;
     case  'venta-mesa':  return <VentaMesaView />;
 
-    case 'produccion':  return <ProduccionView />;
+    case 'cocina':      return <CocinaView />;
     case 'insumos':     return <InsumosView />;
     case 'almacen':     return <AlmacenView />;
 
@@ -68,7 +69,7 @@ export default function Page() {
   );
 
   const handleViewChange = (view: string) => {
-    if (usuario?.rol === 'cajero' && SOLO_ADMIN.includes(view)) return;
+    if (usuario?.rol === 'cajero' && VETADO_CAJERO.includes(view)) return;
     setActive(view);
   };
 

@@ -1,4 +1,4 @@
-// componentes/insumos/InsumosView.tsx
+// componentes/insumos/InsumosView.tsx esto es productos
 'use client';
 
 import React, { useState, useMemo, useEffect, useCallback } from 'react';

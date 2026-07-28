@@ -21,7 +21,7 @@ import type {
   Compra, ProduccionCocina,
   Usuario, Pedido, PedidoItem, Notificacion,
   CrearVentaPayload, EstadoMesa, ZonaAlmacen,
-  RolUsuario,
+  RolUsuario, EstadoPedido,
 } from '../types';
 
 const db = _supabase as DB;
@@ -254,13 +254,61 @@ export async function agregarItemPedido(
       cantidad,
       precio_unitario: precioUnitario,
       notas:           notas ?? null,
-      estado:          'abierto',
+      // El cajero confirma el pedido = sale a cocina de inmediato.
+      // No hay paso intermedio de "abierto sin enviar" en este flujo.
+      estado:          'enviado_cocina',
     })
     .select('*, producto:productos(*)')
     .single();
   if (error) throw error;
 
   return data as PedidoItem;
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// COCINA (KDS — Kitchen Display System)
+// ════════════════════════════════════════════════════════════════════════════
+// Pantalla en tiempo real para el rol "cocinero" (y admin). Muestra los
+// pedido_items que el cajero envió desde Venta Mesa, agrupados por mesa.
+// No toca el estado del pedido en sí (eso lo maneja el cobro/cierre de mesa).
+
+export async function getPedidosCocina(): Promise<Pedido[]> {
+  const { data, error } = await supabase
+    .from('pedidos')
+    .select(`
+      *,
+      mesa:mesas(*),
+      usuario:usuarios(nombre),
+      items:pedido_items(*, producto:productos(*))
+    `)
+    .not('estado', 'in', '("entregado","cancelado")')
+    .order('created_at', { ascending: true });
+  if (error) throw error;
+
+  // Solo pedidos que tengan al menos un item pendiente o listo en cocina
+  return ((data ?? []) as Pedido[]).filter((p) =>
+    (p.items ?? []).some((i) => i.estado === 'enviado_cocina' || i.estado === 'listo'),
+  );
+}
+
+export async function actualizarEstadoItemPedido(
+  itemId: string,
+  estado: EstadoPedido,
+): Promise<void> {
+  const { error } = await db
+    .from('pedido_items')
+    .update({ estado })
+    .eq('id', itemId);
+  if (error) throw error;
+}
+
+export async function marcarPedidoListoParaCocina(pedidoId: string): Promise<void> {
+  const { error } = await db
+    .from('pedido_items')
+    .update({ estado: 'listo' })
+    .eq('pedido_id', pedidoId)
+    .eq('estado', 'enviado_cocina');
+  if (error) throw error;
 }
 
 // ════════════════════════════════════════════════════════════════════════════

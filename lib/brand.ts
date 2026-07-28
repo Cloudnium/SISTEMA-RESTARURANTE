@@ -50,8 +50,8 @@ export const MENU_SECTIONS: MenuSection[] = [
   {
     title: 'Cocina',
     items: [
-      { id: 'produccion',  label: 'Producción',       icon: ChefHat    },
-      { id: 'insumos',     label: 'Insumos',          icon: Package    },
+      { id: 'cocina',      label: 'Cocina',           icon: ChefHat    },
+      { id: 'insumos',     label: 'Productos',          icon: Package    },
       { id: 'almacen',     label: 'Almacén',          icon: Warehouse  },
     ],
   },
