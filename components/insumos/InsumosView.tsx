@@ -14,8 +14,8 @@ import { crearProducto, actualizarProducto, ajustarStockInsumo } from '@/lib/sup
 import { supabase } from '@/lib/supabase/client';
 import type { Producto } from '@/lib/supabase/types';
 
-type UnidadKey = 'litros' | 'kg' | 'unidades' | 'bolsas' | 'cajas';
-const UNIDADES: UnidadKey[] = ['kg', 'litros', 'unidades', 'bolsas', 'cajas'];
+type UnidadKey = 'unidades' | 'porciones' | 'kg' | 'litros' | 'bolsas' | 'cajas';
+const UNIDADES: UnidadKey[] = ['unidades', 'porciones', 'kg', 'litros', 'bolsas', 'cajas'];
 
 // ─── Tipos historial ──────────────────────────────────────────────────────────
 interface HistorialItem {
@@ -35,12 +35,12 @@ type TipoFiltro    = 'todos' | 'consumo' | 'ingreso';
 // ─── Formulario insumo ────────────────────────────────────────────────────────
 interface FormState {
   nombre: string; categoria: string; unidad_medida: UnidadKey;
-  stock_cocina: string; stock_minimo_cocina: string;
+  stock_tienda: string; stock_minimo_tienda: string;
   precio: string; costo: string;
 }
 const FORM_VACIO: FormState = {
-  nombre: '', categoria: '', unidad_medida: 'kg',
-  stock_cocina: '0', stock_minimo_cocina: '5', precio: '0', costo: '0',
+  nombre: '', categoria: '', unidad_medida: 'unidades',
+  stock_tienda: '0', stock_minimo_tienda: '5', precio: '0', costo: '0',
 };
 
 // ─── Modal Insumo ─────────────────────────────────────────────────────────────
@@ -49,7 +49,7 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
 }) {
   const [form,      setForm]      = useState<FormState>(insumo
     ? { nombre: insumo.nombre, categoria: insumo.categoria, unidad_medida: insumo.unidad_medida as UnidadKey,
-        stock_cocina: String(insumo.stock_cocina), stock_minimo_cocina: String(insumo.stock_minimo_cocina),
+        stock_tienda: String(insumo.stock_tienda), stock_minimo_tienda: String(insumo.stock_minimo_tienda),
         precio: String(insumo.precio), costo: String(insumo.costo ?? 0) }
     : FORM_VACIO);
   const [guardando, setGuardando] = useState(false);
@@ -64,14 +64,21 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
     try {
       const payload = {
         nombre: form.nombre.trim(), categoria: form.categoria.trim(),
-        tipo: 'insumo' as const, unidad_medida: form.unidad_medida,
-        stock_cocina: parseInt(form.stock_cocina) || 0,
-        stock_minimo_cocina: parseInt(form.stock_minimo_cocina) || 5,
+        tipo: 'producto_venta' as const, unidad_medida: form.unidad_medida,
+        stock_tienda: parseInt(form.stock_tienda) || 0,
+        stock_minimo_tienda: parseInt(form.stock_minimo_tienda) || 5,
         precio: parseFloat(form.precio) || 0, costo: parseFloat(form.costo) || 0,
-        stock_tienda: 0, stock_general: 0, stock_minimo_tienda: 0, activo: true,
+        activo: true,
       };
-      if (insumo) await actualizarProducto(insumo.id, payload);
-      else        await crearProducto(payload as Parameters<typeof crearProducto>[0]);
+      if (insumo) {
+        // Editar: no tocamos stock_cocina / stock_general, solo lo que el form controla
+        await actualizarProducto(insumo.id, payload);
+      } else {
+        await crearProducto({
+          ...payload,
+          stock_cocina: 0, stock_general: 0, stock_minimo_cocina: 0,
+        } as Parameters<typeof crearProducto>[0]);
+      }
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al guardar');
@@ -85,7 +92,7 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
       style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
       <div className="rounded-2xl w-full max-w-md shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: B.cream }}>
-          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>{insumo ? 'Editar Insumo' : 'Nuevo Insumo'}</h2>
+          <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>{insumo ? 'Editar Producto' : 'Nuevo Producto'}</h2>
           <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
             onMouseEnter={e => e.currentTarget.style.background = B.cream}
             onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
@@ -94,8 +101,8 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
         </div>
         <div className="p-6 space-y-3">
           {[
-            { key: 'nombre' as const,    label: 'Nombre del insumo', ph: 'Ej: Arroz, Harina, Huevo...', type: 'text' },
-            { key: 'categoria' as const, label: 'Categoría',         ph: 'Ej: Cereales, Lácteos, Carnes...', type: 'text' },
+            { key: 'nombre' as const,    label: 'Nombre del producto', ph: 'Ej: Queque de chocolate, Torta tres leches...', type: 'text' },
+            { key: 'categoria' as const, label: 'Categoría',           ph: 'Ej: Postres, Panadería, Bebidas...', type: 'text' },
           ].map(({ key, label, ph, type }) => (
             <div key={key}>
               <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>{label}</label>
@@ -122,15 +129,15 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Stock cocina</label>
-              <input type="number" value={form.stock_cocina}
-                onChange={e => setForm(f => ({ ...f, stock_cocina: e.target.value }))}
+              <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Stock tienda</label>
+              <input type="number" value={form.stock_tienda}
+                onChange={e => setForm(f => ({ ...f, stock_tienda: e.target.value }))}
                 className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
             </div>
             <div>
               <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Stock mínimo</label>
-              <input type="number" value={form.stock_minimo_cocina}
-                onChange={e => setForm(f => ({ ...f, stock_minimo_cocina: e.target.value }))}
+              <input type="number" value={form.stock_minimo_tienda}
+                onChange={e => setForm(f => ({ ...f, stock_minimo_tienda: e.target.value }))}
                 className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
             </div>
           </div>
@@ -143,7 +150,7 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
             className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
             style={{ background: B.green, color: B.cream }}>
             {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
-            {insumo ? 'Guardar' : 'Crear insumo'}
+            {insumo ? 'Guardar' : 'Crear producto'}
           </button>
         </div>
       </div>
@@ -167,23 +174,23 @@ function ModalConsumo({ insumo, onClose, onSaved }: {
   const handleConfirmar = async () => {
     const cant = parseFloat(cantidad);
     if (!cant || cant <= 0) { setError('Ingresa una cantidad válida'); return; }
-    if (modo === 'consumo' && cant > insumo.stock_cocina) {
-      setError(`No puedes descontar más de lo disponible (${insumo.stock_cocina} ${insumo.unidad_medida})`); return;
+    if (modo === 'consumo' && cant > insumo.stock_tienda) {
+      setError(`No puedes descontar más de lo disponible (${insumo.stock_tienda} ${insumo.unidad_medida})`); return;
     }
-    if (!usuario) return;
+    if (!usuario) { setError('No se pudo identificar tu sesión. Vuelve a iniciar sesión e intenta de nuevo.'); return; }
     setGuardando(true); setError('');
     try {
       const delta = modo === 'consumo' ? -cant : cant;
-      await ajustarStockInsumo(insumo.id, delta, usuario.id, obs || undefined);
+      await ajustarStockInsumo(insumo.id, delta, usuario.id, obs || undefined, 'tienda');
       onSaved();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al registrar consumo');
+      setError(e instanceof Error ? e.message : 'Error al registrar el movimiento');
     } finally {
       setGuardando(false);
     }
   };
 
-  const stockResult = Math.max(0, insumo.stock_cocina + (parseFloat(cantidad) || 0) * (modo === 'consumo' ? -1 : 1));
+  const stockResult = Math.max(0, insumo.stock_tienda + (parseFloat(cantidad) || 0) * (modo === 'consumo' ? -1 : 1));
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -191,7 +198,7 @@ function ModalConsumo({ insumo, onClose, onSaved }: {
       <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: B.cream }}>
           <div>
-            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Registrar Consumo</h2>
+            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Ajustar Stock</h2>
             <p className="text-xs" style={{ color: B.muted }}>{insumo.nombre} · {insumo.unidad_medida}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
@@ -204,7 +211,7 @@ function ModalConsumo({ insumo, onClose, onSaved }: {
           {/* Stock actual */}
           <div className="rounded-xl p-3 text-center" style={{ background: B.cream }}>
             <p className="text-xs font-bold uppercase tracking-wide" style={{ color: B.muted }}>Stock actual</p>
-            <p className="text-3xl font-black" style={{ color: B.charcoal }}>{insumo.stock_cocina}</p>
+            <p className="text-3xl font-black" style={{ color: B.charcoal }}>{insumo.stock_tienda}</p>
             <p className="text-xs" style={{ color: B.muted }}>{insumo.unidad_medida}</p>
           </div>
 
@@ -244,7 +251,7 @@ function ModalConsumo({ insumo, onClose, onSaved }: {
           {cantidad && (
             <div className="flex items-center justify-between rounded-xl px-4 py-2.5" style={{ background: B.cream }}>
               <span className="text-sm" style={{ color: B.muted }}>Stock resultante:</span>
-              <span className="text-lg font-black" style={{ color: stockResult < insumo.stock_minimo_cocina ? B.terra : B.green }}>
+              <span className="text-lg font-black" style={{ color: stockResult < insumo.stock_minimo_tienda ? B.terra : B.green }}>
                 {stockResult} {insumo.unidad_medida}
               </span>
             </div>
@@ -254,7 +261,7 @@ function ModalConsumo({ insumo, onClose, onSaved }: {
           <div>
             <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Motivo (opcional)</label>
             <input type="text" value={obs} onChange={e => setObs(e.target.value)}
-              placeholder={modo === 'consumo' ? 'Ej: Usado en preparación de queques...' : 'Ej: Compra adicional recibida...'}
+              placeholder={modo === 'consumo' ? 'Ej: Merma, producto dañado...' : 'Ej: Reposición desde producción...'}
               className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
           </div>
 
@@ -311,7 +318,10 @@ function ModalHistorial({ onClose }: {
           producto_id,
           tipo,
           cantidad,
+          stock_cocina_antes,
           stock_cocina_despues,
+          stock_tienda_antes,
+          stock_tienda_despues,
           observacion,
           created_at,
           producto:productos(nombre),
@@ -327,15 +337,18 @@ function ModalHistorial({ onClose }: {
       const items: HistorialItem[] = (data ?? []).map((r: Record<string, unknown>) => {
         const prod = r.producto as Record<string, unknown> | null;
         const usr  = r.usuario  as Record<string, unknown> | null;
-        // Determinar delta: cantidad positiva = ingreso, negativa = consumo
-        // stock_cocina_antes - stock_cocina_despues para detectar consumo
-        const delta = r.tipo === 'salida_cocina' ? -(r.cantidad as number) : (r.cantidad as number);
+        // Soporta movimientos de tienda (productos) y, por compatibilidad, de cocina (insumos antiguos)
+        const stockDespues = (r.stock_tienda_despues as number | null)
+          ?? (r.stock_cocina_despues as number | null) ?? 0;
+        const stockAntes = (r.stock_tienda_antes as number | null)
+          ?? (r.stock_cocina_antes as number | null) ?? stockDespues;
+        const delta = stockDespues - stockAntes;
         return {
           id:               r.id as string,
           producto_id:      r.producto_id as string,
           producto_nombre:  prod ? (prod.nombre as string) : (r.producto_id as string),
           delta,
-          stock_resultante: r.stock_cocina_despues as number ?? 0,
+          stock_resultante: stockDespues,
           observacion:      r.observacion as string | null,
           usuario_nombre:   usr ? (usr.nombre as string) : null,
           created_at:       r.created_at as string,
@@ -383,7 +396,7 @@ function ModalHistorial({ onClose }: {
         <div className="flex items-center justify-between px-6 py-4 border-b shrink-0" style={{ borderColor: B.cream }}>
           <div className="flex items-center gap-2">
             <BarChart3 className="w-5 h-5" style={{ color: B.terra }} />
-            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Historial de Consumo</h2>
+            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Historial de Movimientos</h2>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
             onMouseEnter={e => e.currentTarget.style.background = B.cream}
@@ -433,7 +446,7 @@ function ModalHistorial({ onClose }: {
             <div className="flex-1 min-w-40 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: B.muted }} />
               <input value={insumoBusc} onChange={e => setInsumoBusc(e.target.value)}
-                placeholder="Buscar insumo..."
+                placeholder="Buscar producto..."
                 className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs outline-none"
                 style={{ background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal }} />
             </div>
@@ -473,7 +486,7 @@ function ModalHistorial({ onClose }: {
             <table className="w-full">
               <thead className="sticky top-0" style={{ background: B.cream }}>
                 <tr>
-                  {['Fecha/Hora', 'Insumo', 'Movimiento', 'Stock res.', 'Motivo', 'Usuario'].map(h => (
+                  {['Fecha/Hora', 'Producto', 'Movimiento', 'Stock res.', 'Motivo', 'Usuario'].map(h => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-black uppercase tracking-widest"
                       style={{ color: B.muted }}>{h}</th>
                   ))}
@@ -522,7 +535,7 @@ export default function InsumosView() {
   const [modalConsumo,  setModalConsumo]  = useState<Producto | null>(null);
   const [modalHistorial,setModalHistorial]= useState(false);
 
-  const insumos = useMemo(() => productos.filter(p => p.tipo === 'insumo' && p.activo), [productos]);
+  const insumos = useMemo(() => productos.filter(p => p.tipo === 'producto_venta' && p.activo), [productos]);
 
   // Realtime
   useEffect(() => {
@@ -538,7 +551,7 @@ export default function InsumosView() {
     return ['Todos', ...cats];
   }, [insumos]);
 
-  const bajos = insumos.filter(i => i.stock_cocina < i.stock_minimo_cocina);
+  const bajos = insumos.filter(i => i.stock_tienda < i.stock_minimo_tienda);
 
   const filtrados = useMemo(() => insumos.filter(i => {
     const matchQ = i.nombre.toLowerCase().includes(busqueda.toLowerCase());
@@ -546,7 +559,7 @@ export default function InsumosView() {
     return matchQ && matchC;
   }), [insumos, busqueda, catFiltro]);
 
-  const valorTotal = insumos.reduce((a, i) => a + i.stock_cocina * i.precio, 0);
+  const valorTotal = insumos.reduce((a, i) => a + i.stock_tienda * i.precio, 0);
 
   if (isLoading) return (
     <div className="flex items-center justify-center min-h-[60vh]">
@@ -556,7 +569,7 @@ export default function InsumosView() {
 
   return (
     <div>
-      <PageHeader title="Insumos de Cocina" subtitle="Inventario de materia prima e ingredientes"
+      <PageHeader title="Productos" subtitle="Productos que se venden en el punto de venta"
         action={
           <div className="flex gap-2">
             <button onClick={() => setModalHistorial(true)}
@@ -564,7 +577,7 @@ export default function InsumosView() {
               style={{ background: B.terra, color: B.cream }}>
               <BarChart3 className="w-4 h-4" />Historial
             </button>
-            <Btn onClick={() => setModal({ open: true, insumo: null })}><Plus className="w-4 h-4" />Nuevo Insumo</Btn>
+            <Btn onClick={() => setModal({ open: true, insumo: null })}><Plus className="w-4 h-4" />Nuevo Producto</Btn>
           </div>
         } />
 
@@ -573,7 +586,7 @@ export default function InsumosView() {
           style={{ background: '#fef0e6', border: `1px solid ${B.terra}30` }}>
           <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" style={{ color: B.terra }} />
           <div>
-            <p className="text-sm font-bold" style={{ color: B.terra }}>{bajos.length} insumos bajo el mínimo</p>
+            <p className="text-sm font-bold" style={{ color: B.terra }}>{bajos.length} productos bajo el mínimo</p>
             <p className="text-xs mt-0.5" style={{ color: B.terra }}>{bajos.map(i => i.nombre).join(', ')}</p>
           </div>
         </div>
@@ -581,9 +594,9 @@ export default function InsumosView() {
 
       <div className="grid grid-cols-3 gap-4 mb-5">
         {[
-          { label: 'Total Insumos',  value: insumos.length,              unit: 'productos',    color: B.charcoal },
+          { label: 'Total Productos',value: insumos.length,              unit: 'productos',    color: B.charcoal },
           { label: 'Stock Bajo',     value: bajos.length,                unit: 'por reponer',  color: B.terra    },
-          { label: 'Valor en Cocina',value: `S/ ${Math.round(valorTotal)}`,unit: 'estimado',  color: B.green    },
+          { label: 'Valor en Tienda',value: `S/ ${Math.round(valorTotal)}`,unit: 'estimado',  color: B.green    },
         ].map(s => (
           <Card key={s.label}>
             <p className="text-xs uppercase tracking-widest" style={{ color: B.muted }}>{s.label}</p>
@@ -593,27 +606,21 @@ export default function InsumosView() {
         ))}
       </div>
 
-      {/* Filtros unificados en una sola línea */}
-      <div className="flex flex-wrap gap-3 mb-4">
+      {/* Filtros unificados en una sola tarjeta */}
+      <div className="flex gap-2 mb-4">
         {/* Buscador */}
-        <div className="flex-1 min-w-48 relative">
+        <div className="flex-1 relative">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: B.muted }} />
-          <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar insumo..."
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
+          <input value={busqueda} onChange={e => setBusqueda(e.target.value)} placeholder="Buscar producto..."
+            className="w-full pl-9 pr-4 py-3 rounded-xl text-sm outline-none"
             style={{ background: B.white, border: `1px solid ${B.cream}`, color: B.charcoal }} />
         </div>
-        {/* Categorías inline */}
-        <div className="flex flex-wrap gap-1.5 items-center">
-          {categorias.map(c => (
-            <button key={c} onClick={() => setCatFiltro(c)}
-              className="px-3 py-2 rounded-xl text-xs font-semibold transition-all"
-              style={catFiltro === c
-                ? { background: B.charcoal, color: B.cream }
-                : { background: B.white, color: B.charcoal, border: `1px solid ${B.cream}` }}>
-              {c}
-            </button>
-          ))}
-        </div>
+        {/* Dropdown categorías */}
+        <select value={catFiltro} onChange={e => setCatFiltro(e.target.value)}
+          className="py-3 px-3 rounded-xl text-sm font-semibold outline-none cursor-pointer shrink-0"
+          style={{ background: B.white, border: `1px solid ${B.cream}`, color: B.charcoal, minWidth: 140 }}>
+          {categorias.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
 
       {/* Tabla */}
@@ -621,7 +628,7 @@ export default function InsumosView() {
         <table className="w-full">
           <thead>
             <tr style={{ background: B.cream }}>
-              {['Insumo', 'Categoría', 'Stock cocina / Mín.', 'Precio unit.', 'Acción'].map(h => (
+              {['Producto', 'Categoría', 'Stock tienda / Mín.', 'Precio unit.', 'Acción'].map(h => (
                 <th key={h} className="text-left px-4 py-3 text-xs font-black uppercase tracking-widest"
                   style={{ color: B.muted }}>{h}</th>
               ))}
@@ -629,8 +636,8 @@ export default function InsumosView() {
           </thead>
           <tbody>
             {filtrados.map(ins => {
-              const low = ins.stock_cocina < ins.stock_minimo_cocina;
-              const pct = Math.min((ins.stock_cocina / Math.max(ins.stock_minimo_cocina * 3, 1)) * 100, 100);
+              const low = ins.stock_tienda < ins.stock_minimo_tienda;
+              const pct = Math.min((ins.stock_tienda / Math.max(ins.stock_minimo_tienda * 3, 1)) * 100, 100);
               return (
                 <tr key={ins.id} style={{ borderTop: `1px solid ${B.cream}` }}
                   onMouseEnter={e => e.currentTarget.style.background = `${B.cream}50`}
@@ -649,18 +656,18 @@ export default function InsumosView() {
                   <td className="px-4 py-3 w-44">
                     <div className="flex items-center gap-2 mb-1">
                       <ProgressBar pct={pct} color={low ? B.terra : B.green} height={5} />
-                      <span className="text-xs font-bold shrink-0" style={{ color: low ? B.terra : B.charcoal }}>{ins.stock_cocina}</span>
+                      <span className="text-xs font-bold shrink-0" style={{ color: low ? B.terra : B.charcoal }}>{ins.stock_tienda}</span>
                     </div>
-                    <p className="text-[10px]" style={{ color: B.muted }}>Mín: {ins.stock_minimo_cocina}</p>
+                    <p className="text-[10px]" style={{ color: B.muted }}>Mín: {ins.stock_minimo_tienda}</p>
                   </td>
                   <td className="px-4 py-3 text-sm font-medium" style={{ color: B.charcoal }}>S/ {ins.precio.toFixed(2)}</td>
                   <td className="px-4 py-3">
                     <div className="flex gap-2">
-                      {/* Botón CONSUMO (antes: Stock) */}
+                      {/* Botón Ajustar Stock */}
                       <button onClick={() => setModalConsumo(ins)}
                         className="flex items-center gap-1 text-xs font-bold px-3 py-1.5 rounded-lg"
                         style={{ background: B.terra, color: B.cream }}>
-                        <Minus className="w-3 h-3" /> Consumo
+                        <Minus className="w-3 h-3" /> Ajustar
                       </button>
                       <button onClick={() => setModal({ open: true, insumo: ins })}
                         className="text-xs font-bold px-3 py-1.5 rounded-lg"
@@ -676,7 +683,7 @@ export default function InsumosView() {
         </table>
         {filtrados.length === 0 && (
           <div className="py-10 text-center text-sm" style={{ color: B.muted }}>
-            {insumos.length === 0 ? 'Sin insumos registrados aún' : 'No hay resultados'}
+            {insumos.length === 0 ? 'Sin productos registrados aún' : 'No hay resultados'}
           </div>
         )}
       </div>

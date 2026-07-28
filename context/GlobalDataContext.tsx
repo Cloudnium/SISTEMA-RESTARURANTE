@@ -83,7 +83,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const [isLoading,          setIsLoading]          = useState(true);
   const [isLoadingComplete,  setIsLoadingComplete]  = useState(false);
 
-  const { usuario: usuarioActual } = useAuth();
+  const { usuario: usuarioActual, loading: authLoading } = useAuth();
   const usuarioActualRef = useRef<typeof usuarioActual>(null);
   useEffect(() => { usuarioActualRef.current = usuarioActual; }, [usuarioActual]);
 
@@ -204,28 +204,24 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   ]);
 
   // ── Carga inicial (una sola vez) ───────────────────────────────────────────
+  // FIX RENDIMIENTO: antes este efecto hacía su propia llamada a
+  // supabase.auth.getSession() / onAuthStateChange en paralelo a AuthContext,
+  // duplicando un round-trip a Supabase que ya se estaba haciendo allá.
+  // Ahora simplemente reacciona al estado ya resuelto de AuthContext
+  // (usuario / loading), que es la misma fuente de verdad y llega apenas
+  // AuthContext termina de verificar sesión + cargar perfil.
   useEffect(() => {
-    if (cargaIniciadaRef.current) return;
+    if (authLoading) return; // AuthContext aún resolviendo la sesión
 
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-      if (session && !cargaIniciadaRef.current) {
-        cargaIniciadaRef.current = true;
-        refetchAll();
-      }
-      if (event === 'SIGNED_OUT') {
-        cargaIniciadaRef.current = false;
-      }
-    });
+    if (usuarioActual && !cargaIniciadaRef.current) {
+      cargaIniciadaRef.current = true;
+      refetchAll();
+    }
 
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      if (session && !cargaIniciadaRef.current) {
-        cargaIniciadaRef.current = true;
-        refetchAll();
-      }
-    });
-
-    return () => subscription.unsubscribe();
-  }, [refetchAll]);
+    if (!usuarioActual) {
+      cargaIniciadaRef.current = false;
+    }
+  }, [usuarioActual, authLoading, refetchAll]);
 
   // ── Refs estables para el canal Realtime ──────────────────────────────────
   const refetchProductosRef       = useRef(refetchProductos);       // ← FIX: ref para productos

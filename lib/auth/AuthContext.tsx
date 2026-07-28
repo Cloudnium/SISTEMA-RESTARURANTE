@@ -252,9 +252,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const token = leerToken();
 
       if (token) {
-        // Verificar si fue invalidada mientras el navegador estuvo cerrado
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const { data: activa } = await (supabase.rpc as any)('fn_verificar_sesion', { p_token: token });
+        // FIX RENDIMIENTO: fn_verificar_sesion y cargarPerfil NO dependen una
+        // de la otra (fn_verificar_sesion es SECURITY DEFINER y usuarios_ver_todos
+        // permite leer el perfil sin importar el estado de la sesión en BD), así
+        // que se disparan en paralelo en vez de en secuencia. Si luego resulta
+        // que la sesión estaba invalidada, el perfil obtenido simplemente se
+        // descarta. Esto ahorra un round-trip completo a Supabase en cada carga.
+        const [{ data: activa }, perfil] = await Promise.all([
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          (supabase.rpc as any)('fn_verificar_sesion', { p_token: token }),
+          cargarPerfil(session.user.id),
+        ]);
 
         // FIX: antes el check era `activa === false`, lo que significa que si
         // fn_verificar_sesion devuelve null (error de red, función no existe, etc.)
@@ -269,7 +277,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
         // activa === true (normal) o activa === null (error de red → beneficio de la duda)
         tokenRef.current = token;
-        const perfil = await cargarPerfil(session.user.id);
         if (!cancelled) {
           setUsuario(perfil);
           usuarioRef.current = perfil;
@@ -278,14 +285,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } else {
         // No hay token local pero sí sesión Auth activa.
         // Puede pasar en: otro dispositivo, localStorage limpiado, primera carga post-deploy.
-        // FIX: registrarSesion es awaited → la sesión está confirmada en BD
-        // antes de activar el polling. Se elimina el setTimeout(300) que era insuficiente.
-        const perfil = await cargarPerfil(session.user.id);
+        // FIX RENDIMIENTO: cargarPerfil y registrarSesion tampoco dependen entre sí
+        // (registrarSesion solo necesita el userId), así que van en paralelo.
+        // registrarSesion sigue siendo awaited → la sesión queda confirmada en BD
+        // antes de activar el polling.
+        const [perfil, nuevoToken] = await Promise.all([
+          cargarPerfil(session.user.id),
+          registrarSesion(session.user.id),
+        ]);
         if (!cancelled) {
           setUsuario(perfil);
           usuarioRef.current = perfil;
         }
-        const nuevoToken = await registrarSesion(session.user.id);
         iniciarVigilancia(nuevoToken, () => logout());
       }
 

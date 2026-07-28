@@ -723,35 +723,17 @@ export async function ajustarStockInsumo(
   cantidadDelta: number,
   usuarioId: string,
   observacion?: string,
+  zona: 'cocina' | 'tienda' = 'cocina',
 ) {
-  const { data: prod, error: errRead } = await db
-    .from('productos')
-    .select('stock_cocina')
-    .eq('id', productoId)
-    .single();
-  if (errRead) throw errRead;
-
-  const stockAntes = prod?.stock_cocina ?? 0;
-  const nuevoStock = Math.max(0, stockAntes + cantidadDelta);
-
-  const { error: errUpdate } = await db
-    .from('productos')
-    .update({ stock_cocina: nuevoStock })
-    .eq('id', productoId);
-  if (errUpdate) throw errUpdate;
-
-  const tipo = cantidadDelta < 0 ? 'salida_cocina' : 'ajuste';
-  await db.from('movimientos_almacen').insert({
-    producto_id:          productoId,
-    tipo,
-    cantidad:             Math.abs(cantidadDelta),
-    stock_cocina_antes:   stockAntes,
-    stock_cocina_despues: nuevoStock,
-    usuario_id:           usuarioId,
-    observacion:          observacion ?? null,
+  const { data, error } = await db.rpc('fn_ajustar_stock_producto', {
+    p_producto_id:    productoId,
+    p_zona:           zona,
+    p_cantidad_delta: cantidadDelta,
+    p_usuario_id:     usuarioId,
+    p_observacion:    observacion ?? null,
   });
-
-  return nuevoStock;
+  if (error) throw error;
+  return data as number;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
