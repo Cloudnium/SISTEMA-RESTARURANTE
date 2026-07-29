@@ -11,6 +11,7 @@ import { ProductoCard }  from '@/components/ventas/ProductoCard';
 import { CarritoPanel }  from '@/components/ventas/CarritoPanel';
 import { ModalCobro }    from '@/components/ventas/modals/ModalCobro';
 import { POR_PAGINA }    from '@/constants/ventas/ventasConstants';
+import { ordenarCategorias } from '@/constants/productos/productosConstants';
 import type { Producto, CartItem } from '@/lib/supabase/types';
 
 export default function VentasView() {
@@ -33,7 +34,7 @@ export default function VentasView() {
   );
 
   const categorias = useMemo(() => {
-    const cats = [...new Set(productosVenta.map((p) => p.categoria))].sort();
+    const cats = ordenarCategorias([...new Set(productosVenta.map((p) => p.categoria))]);
     return ['Todos', ...cats];
   }, [productosVenta]);
 

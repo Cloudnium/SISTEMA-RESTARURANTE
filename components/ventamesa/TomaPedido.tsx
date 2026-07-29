@@ -16,6 +16,7 @@ import {
 } from '@/lib/supabase/queries';
 import { catColor, type ItemCarrito, type MesaRow } from '@/utils/venta-mesa/ventaMesaUtils';
 import { ESTADO_CFG } from '@/constants/venta-mesa/ventaMesaConstants';
+import { ordenarCategorias } from '@/constants/productos/productosConstants';
 import { ProductoCard } from './ProductoCard';
 import { CarritoPanel } from './CarritoPanel';
 import type { Producto } from '@/lib/supabase/types';
@@ -79,7 +80,7 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
 
   // ── Categorías únicas ─────────────────────────────────────────────────────
   const categorias = useMemo(
-    () => ['Todas', ...[...new Set(productos.map((p) => p.categoria))].sort()],
+    () => ['Todas', ...ordenarCategorias([...new Set(productos.map((p) => p.categoria))])],
     [productos],
   );
 

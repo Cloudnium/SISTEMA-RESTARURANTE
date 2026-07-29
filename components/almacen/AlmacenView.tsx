@@ -4,9 +4,10 @@
 import React, { useState, useMemo } from 'react';
 import {
   Search, X, Package, AlertTriangle, ArrowUpDown, Loader2, Plus,
+  TrendingDown, TrendingUp,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
-import { PageHeader, Btn, ProgressBar, Paginacion } from '@/components/ui';
+import { PageHeader, Btn, Card, ProgressBar, Paginacion } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { crearProducto, actualizarProducto, ajustarStockInsumo } from '@/lib/supabase/queries';
@@ -191,7 +192,7 @@ function ModalAjustarInsumo({ producto, onClose, onSaved }: {
   producto: Producto; onClose: () => void; onSaved: () => void;
 }) {
   const { usuario }             = useAuth();
-  const [modo,      setModo]      = useState<'ingreso' | 'consumo'>('ingreso');
+  const [modo,      setModo]      = useState<'consumo' | 'ingreso'>('consumo');
   const [cantidad,  setCantidad]  = useState('');
   const [obs,       setObs]       = useState('');
   const [guardando, setGuardando] = useState(false);
@@ -203,7 +204,7 @@ function ModalAjustarInsumo({ producto, onClose, onSaved }: {
     if (modo === 'consumo' && cant > producto.stock_cocina) {
       setError(`No puedes descontar más de lo disponible (${producto.stock_cocina} ${producto.unidad_medida})`); return;
     }
-    if (!usuario) { setError('No se pudo identificar tu sesión. Vuelve a iniciar sesión.'); return; }
+    if (!usuario) { setError('No se pudo identificar tu sesión. Vuelve a iniciar sesión e intenta de nuevo.'); return; }
     setGuardando(true); setError('');
     try {
       const delta = modo === 'consumo' ? -cant : cant;
@@ -219,56 +220,92 @@ function ModalAjustarInsumo({ producto, onClose, onSaved }: {
   const stockResult = Math.max(0, producto.stock_cocina + (parseFloat(cantidad) || 0) * (modo === 'consumo' ? -1 : 1));
 
   return (
-    <ModalBase title="Ajustar Stock" subtitle={producto.nombre} onClose={onClose}
-      actions={<>
-        <button className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
-          style={{ background: B.cream, color: B.charcoal }} onClick={onClose}>Cancelar</button>
-        <button onClick={handleConfirmar} disabled={guardando}
-          className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
-          style={{ background: modo === 'consumo' ? B.terra : B.green, color: B.cream }}>
-          {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
-          Confirmar
-        </button>
-      </>}>
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 gap-2">
-          <button onClick={() => setModo('ingreso')}
-            className="py-2.5 rounded-xl text-sm font-bold"
-            style={modo === 'ingreso' ? { background: B.green, color: B.cream } : { background: B.cream, color: B.charcoal }}>
-            + Ingreso
-          </button>
-          <button onClick={() => setModo('consumo')}
-            className="py-2.5 rounded-xl text-sm font-bold"
-            style={modo === 'consumo' ? { background: B.terra, color: B.cream } : { background: B.cream, color: B.charcoal }}>
-            − Consumo
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+      style={{ background: 'rgba(44,62,53,0.65)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div className="rounded-2xl w-full max-w-sm shadow-2xl" style={{ background: B.white }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b" style={{ borderColor: B.cream }}>
+          <div>
+            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Ajustar Stock</h2>
+            <p className="text-xs" style={{ color: B.muted }}>{producto.nombre} · {producto.unidad_medida}</p>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg" style={{ color: B.muted }}
+            onMouseEnter={e => e.currentTarget.style.background = B.cream}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <X className="w-5 h-5" />
           </button>
         </div>
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>
-            Cantidad {modo === 'consumo' && <span style={{ fontWeight: 400 }}>(máx. {producto.stock_cocina})</span>}
-          </label>
-          <input type="number" min="0.01" step="0.01" value={cantidad}
-            onChange={e => setCantidad(e.target.value)} placeholder="0" autoFocus
-            className="w-full px-4 py-3 rounded-xl text-xl font-bold outline-none"
-            style={{ ...INP, border: `2px solid ${B.creamDark}` }}
-            onFocus={e => e.currentTarget.style.borderColor = modo === 'consumo' ? B.terra : B.green}
-            onBlur={e => e.currentTarget.style.borderColor = B.creamDark} />
+        <div className="p-6 space-y-4">
+          {/* Stock actual */}
+          <div className="rounded-xl p-3 text-center" style={{ background: B.cream }}>
+            <p className="text-xs font-bold uppercase tracking-wide" style={{ color: B.muted }}>Stock actual</p>
+            <p className="text-3xl font-black" style={{ color: B.charcoal }}>{producto.stock_cocina}</p>
+            <p className="text-xs" style={{ color: B.muted }}>{producto.unidad_medida}</p>
+          </div>
+
+          {/* Modo */}
+          <div className="flex gap-2">
+            <button onClick={() => setModo('consumo')}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold"
+              style={modo === 'consumo'
+                ? { background: B.terra, color: B.cream }
+                : { background: B.cream, color: B.charcoal }}>
+              <TrendingDown className="w-4 h-4" /> Consumo
+            </button>
+            <button onClick={() => setModo('ingreso')}
+              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold"
+              style={modo === 'ingreso'
+                ? { background: B.green, color: B.cream }
+                : { background: B.cream, color: B.charcoal }}>
+              <TrendingUp className="w-4 h-4" /> Agregar
+            </button>
+          </div>
+
+          {/* Cantidad */}
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>
+              Cantidad a {modo === 'consumo' ? 'consumir' : 'agregar'}
+            </label>
+            <input type="number" min="0.01" step="0.01" value={cantidad}
+              onChange={e => setCantidad(e.target.value)}
+              placeholder="0" autoFocus
+              className="w-full px-4 py-3 rounded-xl text-2xl font-bold text-center outline-none"
+              style={{ ...INP, border: `2px solid ${B.creamDark}` }}
+              onFocus={e => e.currentTarget.style.borderColor = modo === 'consumo' ? B.terra : B.green}
+              onBlur={e => e.currentTarget.style.borderColor = B.creamDark} />
+          </div>
+
+          {/* Preview */}
+          {cantidad && (
+            <div className="flex items-center justify-between rounded-xl px-4 py-2.5" style={{ background: B.cream }}>
+              <span className="text-sm" style={{ color: B.muted }}>Stock resultante:</span>
+              <span className="text-lg font-black" style={{ color: stockResult < producto.stock_minimo_cocina ? B.terra : B.green }}>
+                {stockResult} {producto.unidad_medida}
+              </span>
+            </div>
+          )}
+
+          {/* Observación */}
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Motivo (opcional)</label>
+            <input type="text" value={obs} onChange={e => setObs(e.target.value)}
+              placeholder={modo === 'consumo' ? 'Ej: Merma, producto dañado...' : 'Ej: Compra recibida...'}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={INP} />
+          </div>
+
+          {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
         </div>
-        <div className="flex items-center justify-between rounded-xl px-3 py-2" style={{ background: B.cream }}>
-          <span className="text-xs font-semibold" style={{ color: B.muted }}>Stock resultante</span>
-          <span className="text-lg font-black" style={{ color: stockResult < producto.stock_minimo_cocina ? B.terra : B.green }}>
-            {stockResult} {producto.unidad_medida}
-          </span>
+        <div className="px-6 pb-6 flex gap-3">
+          <button onClick={onClose} className="flex-1 py-2.5 rounded-xl text-sm font-semibold"
+            style={{ background: B.cream, color: B.charcoal }}>Cancelar</button>
+          <button onClick={handleConfirmar} disabled={guardando}
+            className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+            style={{ background: modo === 'consumo' ? B.terra : B.green, color: B.cream }}>
+            {guardando && <Loader2 className="w-4 h-4 animate-spin" />}
+            Confirmar
+          </button>
         </div>
-        <div>
-          <label className="text-xs font-black uppercase tracking-wide block mb-1" style={{ color: B.muted }}>Motivo (opcional)</label>
-          <input type="text" value={obs} onChange={e => setObs(e.target.value)}
-            placeholder={modo === 'consumo' ? 'Ej: Usado en preparación...' : 'Ej: Compra recibida...'}
-            className={inputCls()} style={INP} />
-        </div>
-        {error && <p className="text-xs px-3 py-2 rounded-xl" style={{ background: '#fef0e6', color: B.terra }}>{error}</p>}
       </div>
-    </ModalBase>
+    </div>
   );
 }
 
@@ -298,7 +335,7 @@ function TablaProductos({
         <tr style={{ background: B.cream }}>
           {['Producto', 'Categoría', 'Precio', 'Stock', 'Acción'].map(h => (
             <th key={h} className="text-left px-4 py-3 text-xs font-black uppercase tracking-widest"
-              style={{ color: B.muted }}>{h}</th>
+              style={{ color: B.muted, width: h === 'Producto' ? '34%' : undefined }}>{h}</th>
           ))}
         </tr>
       </thead>
@@ -364,21 +401,33 @@ function TablaProductos({
 export function AlmacenView() {
   const { productos, isLoading, refetchProductos } = useGlobalData();
   const [busqueda,   setBusqueda]  = useState('');
+  const [catFiltro,  setCatFiltro] = useState('Todos');
   const [modalAjuste,setModalAjuste]=useState<Producto | null>(null);
   const [modalProd,  setModalProd] = useState<{ open: boolean; producto: Producto | null }>({ open: false, producto: null });
   const [pagina,     setPagina]    = useState(1);
   const POR_PAGINA = 20;
 
+  const insumosBase = useMemo(
+    () => productos.filter(p => p.activo && p.tipo === 'insumo'),
+    [productos],
+  );
+
+  const categorias = useMemo(() => {
+    const cats = [...new Set(insumosBase.map(p => p.categoria))].sort();
+    return ['Todos', ...cats];
+  }, [insumosBase]);
+
   const insumos = useMemo(() => {
     const q = busqueda.toLowerCase();
-    return productos
-      .filter(p => p.activo && p.tipo === 'insumo')
+    return insumosBase
+      .filter(p => catFiltro === 'Todos' || p.categoria === catFiltro)
       .filter(p => !q || p.nombre.toLowerCase().includes(q) || p.categoria.toLowerCase().includes(q))
       .sort((a, b) => a.nombre.localeCompare(b.nombre));
-  }, [productos, busqueda]);
+  }, [insumosBase, busqueda, catFiltro]);
 
-  const [prevBusqueda, setPrevBusqueda] = useState(busqueda);
-  if (busqueda !== prevBusqueda) { setPrevBusqueda(busqueda); setPagina(1); }
+  const [prevFiltroKey, setPrevFiltroKey] = useState(`${busqueda}|${catFiltro}`);
+  const filtroKey = `${busqueda}|${catFiltro}`;
+  if (filtroKey !== prevFiltroKey) { setPrevFiltroKey(filtroKey); setPagina(1); }
 
   if (isLoading) return (
     <div className="flex items-center justify-center min-h-[60vh]">
@@ -390,8 +439,8 @@ export function AlmacenView() {
   const paginaSegura = Math.min(pagina, totalPaginas);
   const visibles      = insumos.slice((paginaSegura - 1) * POR_PAGINA, paginaSegura * POR_PAGINA);
 
-  const valorTotal  = insumos.reduce((a, p) => a + p.stock_cocina * (p.costo ?? p.precio), 0);
-  const bajosAlerta = insumos.filter(p => p.stock_cocina < p.stock_minimo_cocina);
+  const valorTotal  = insumosBase.reduce((a, p) => a + p.stock_cocina * (p.costo ?? p.precio), 0);
+  const bajosAlerta = insumosBase.filter(p => p.stock_cocina < p.stock_minimo_cocina);
 
   return (
     <div>
@@ -405,23 +454,18 @@ export function AlmacenView() {
         }
       />
 
-      {/* Descripción */}
-      <div className="rounded-xl px-4 py-2.5 mb-4 text-xs font-medium"
-        style={{ background: B.cream, color: B.muted }}>
-        🌾 Materia prima e ingredientes (arroz, harina, huevo, gelatina en polvo, etc.). No están conectados a ventas — ajusta su stock manualmente aquí.
-      </div>
-
       {/* KPIs */}
       <div className="grid grid-cols-3 gap-4 mb-5">
         {[
-          { label: 'Total insumos',    value: insumos.length,               color: B.charcoal },
-          { label: 'Con alerta stock', value: bajosAlerta.length,           color: B.terra    },
-          { label: 'Valor en almacén', value: `S/ ${valorTotal.toFixed(2)}`,color: B.terra    },
+          { label: 'Total Insumos',    value: insumosBase.length,            unit: 'insumos',    color: B.charcoal },
+          { label: 'Stock Bajo',       value: bajosAlerta.length,            unit: 'por reponer',color: B.terra    },
+          { label: 'Valor en Almacén', value: `S/ ${Math.round(valorTotal)}`,unit: 'estimado',   color: B.terra    },
         ].map(s => (
-          <div key={s.label} className="rounded-2xl p-4" style={{ background: B.white, border: `1px solid ${B.cream}` }}>
-            <p className="text-[10px] font-black uppercase tracking-widest" style={{ color: B.muted }}>{s.label}</p>
-            <p className="text-xl font-black mt-0.5" style={{ color: s.color }}>{s.value}</p>
-          </div>
+          <Card key={s.label}>
+            <p className="text-xs uppercase tracking-widest" style={{ color: B.muted }}>{s.label}</p>
+            <p className="text-2xl font-bold mt-1" style={{ color: s.color }}>{s.value}</p>
+            <p className="text-xs" style={{ color: B.muted }}>{s.unit}</p>
+          </Card>
         ))}
       </div>
 
@@ -439,13 +483,22 @@ export function AlmacenView() {
         </div>
       )}
 
-      {/* Búsqueda */}
-      <div className="relative mb-4">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: B.muted }} />
-        <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
-          placeholder="Buscar insumo / materia prima..."
-          className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
-          style={{ background: B.white, border: `1px solid ${B.cream}`, color: B.charcoal }} />
+      {/* Filtros unificados en una sola tarjeta */}
+      <div className="flex gap-2 mb-4">
+        {/* Buscador */}
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: B.muted }} />
+          <input value={busqueda} onChange={e => setBusqueda(e.target.value)}
+            placeholder="Buscar insumo / materia prima..."
+            className="w-full pl-9 pr-4 py-3 rounded-xl text-sm outline-none"
+            style={{ background: B.white, border: `1px solid ${B.cream}`, color: B.charcoal }} />
+        </div>
+        {/* Dropdown categorías */}
+        <select value={catFiltro} onChange={e => setCatFiltro(e.target.value)}
+          className="py-3 px-3 rounded-xl text-sm font-semibold outline-none cursor-pointer shrink-0"
+          style={{ background: B.white, border: `1px solid ${B.cream}`, color: B.charcoal, minWidth: 140 }}>
+          {categorias.map(c => <option key={c} value={c}>{c}</option>)}
+        </select>
       </div>
 
       {/* Tabla */}

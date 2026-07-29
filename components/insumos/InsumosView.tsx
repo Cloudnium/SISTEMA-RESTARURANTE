@@ -12,6 +12,7 @@ import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { crearProducto, actualizarProducto, ajustarStockInsumo } from '@/lib/supabase/queries';
 import { supabase } from '@/lib/supabase/client';
+import { CATEGORIAS_PRODUCTO, CATEGORIA_OTRA, ordenarCategorias } from '@/constants/productos/productosConstants';
 import type { Producto } from '@/lib/supabase/types';
 
 type UnidadKey = 'unidades' | 'porciones' | 'kg' | 'litros' | 'bolsas' | 'cajas';
@@ -54,6 +55,13 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
     : FORM_VACIO);
   const [guardando, setGuardando] = useState(false);
   const [error,     setError]     = useState('');
+
+  // La categoría es texto libre en la BD, pero en el formulario se elige de
+  // una lista predefinida. Si el producto (editar) trae una categoría que no
+  // está en la lista (dato legado), arrancamos en modo "otra" para no perderla.
+  const [modoCategoria, setModoCategoria] = useState<'lista' | 'otra'>(
+    insumo && insumo.categoria && !CATEGORIAS_PRODUCTO.includes(insumo.categoria) ? 'otra' : 'lista',
+  );
 
   const inp: React.CSSProperties = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
 
@@ -100,17 +108,36 @@ function ModalInsumo({ insumo, onClose, onSaved }: {
           </button>
         </div>
         <div className="p-6 space-y-3">
-          {[
-            { key: 'nombre' as const,    label: 'Nombre del producto', ph: 'Ej: Queque de chocolate, Torta tres leches...', type: 'text' },
-            { key: 'categoria' as const, label: 'Categoría',           ph: 'Ej: Postres, Panadería, Bebidas...', type: 'text' },
-          ].map(({ key, label, ph, type }) => (
-            <div key={key}>
-              <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>{label}</label>
-              <input type={type} value={form[key]}
-                onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))}
-                placeholder={ph} className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
-            </div>
-          ))}
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre del producto</label>
+            <input type="text" value={form.nombre}
+              onChange={e => setForm(f => ({ ...f, nombre: e.target.value }))}
+              placeholder="Ej: Queque de chocolate, Torta tres leches..."
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp} />
+          </div>
+
+          <div>
+            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Categoría</label>
+            <select
+              value={modoCategoria === 'otra' ? CATEGORIA_OTRA : form.categoria}
+              onChange={e => {
+                const val = e.target.value;
+                if (val === CATEGORIA_OTRA) { setModoCategoria('otra'); setForm(f => ({ ...f, categoria: '' })); }
+                else                        { setModoCategoria('lista'); setForm(f => ({ ...f, categoria: val })); }
+              }}
+              className="w-full px-3 py-2.5 rounded-xl text-sm outline-none" style={inp}>
+              <option value="" disabled>Selecciona una categoría</option>
+              {CATEGORIAS_PRODUCTO.map(c => <option key={c} value={c}>{c}</option>)}
+              <option value={CATEGORIA_OTRA}>Otra (escribir manualmente)</option>
+            </select>
+            {modoCategoria === 'otra' && (
+              <input type="text" value={form.categoria}
+                onChange={e => setForm(f => ({ ...f, categoria: e.target.value }))}
+                placeholder="Escribe la categoría"
+                className="w-full px-3 py-2.5 rounded-xl text-sm outline-none mt-2" style={inp} />
+            )}
+          </div>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
               <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Unidad</label>
@@ -346,11 +373,16 @@ function ModalHistorial({ onClose }: {
       const items: HistorialItem[] = (data ?? []).map((r: Record<string, unknown>) => {
         const prod = r.producto as Record<string, unknown> | null;
         const usr  = r.usuario  as Record<string, unknown> | null;
-        // Soporta movimientos de tienda (productos) y, por compatibilidad, de cocina (insumos antiguos)
-        const stockDespues = (r.stock_tienda_despues as number | null)
-          ?? (r.stock_cocina_despues as number | null) ?? 0;
-        const stockAntes = (r.stock_tienda_antes as number | null)
-          ?? (r.stock_cocina_antes as number | null) ?? stockDespues;
+        // Detectar la zona real del movimiento viendo qué par antes/después cambió,
+        // en vez de usar ?? (las columnas no usadas quedan en 0 por defecto en la BD,
+        // no en null, así que ?? elegía "tienda" incluso para movimientos de cocina)
+        const tAntes   = (r.stock_tienda_antes   as number | null) ?? 0;
+        const tDespues = (r.stock_tienda_despues as number | null) ?? 0;
+        const cAntes   = (r.stock_cocina_antes   as number | null) ?? 0;
+        const cDespues = (r.stock_cocina_despues as number | null) ?? 0;
+        const tiendaCambio = tDespues !== tAntes;
+        const stockAntes   = tiendaCambio ? tAntes   : cAntes;
+        const stockDespues = tiendaCambio ? tDespues : cDespues;
         const delta = stockDespues - stockAntes;
         return {
           id:               r.id as string,
@@ -568,7 +600,7 @@ export default function InsumosView() {
   }, [refetchProductos]);
 
   const categorias = useMemo(() => {
-    const cats = [...new Set(insumos.map(i => i.categoria))].sort();
+    const cats = ordenarCategorias([...new Set(insumos.map(i => i.categoria))]);
     return ['Todos', ...cats];
   }, [insumos]);
 
