@@ -30,11 +30,29 @@ export default function VentaMesaView() {
     setPaso('pedido');
   };
 
-  const handleConfirmado = () => setPaso('exito');
+  // Al confirmar, la mesa pasa a 'ocupada' en la BD (lo hace TomaPedido vía
+  // actualizarEstadoMesa). Reflejamos ese cambio también en el estado local
+  // de `mesa` — si no, cuando el usuario le da "Otro pedido" y TomaPedido se
+  // vuelve a montar, seguiría viendo el estado viejo ('disponible') y
+  // pensaría que no hay pedido activo, intentando crear uno nuevo en una
+  // mesa que ya tiene uno → choque de datos (409) contra la BD. Con esta
+  // actualización, TomaPedido sabe que debe buscar el pedido existente y
+  // sumarle items en vez de crear otro.
+  const handleConfirmado = () => {
+    setMesa(m => (m ? { ...m, estado: 'ocupada' } : m));
+    setPaso('exito');
+  };
 
-  const handleNuevoPedido = () => {
+  // "Volver a mesas" → limpia la mesa seleccionada y vuelve al selector.
+  const handleVolverAMesas = () => {
     setMesa(null);
     setPaso('seleccionar');
+  };
+
+  // "Otro pedido" → se queda en la MISMA mesa y vuelve directo a la
+  // pantalla de toma de pedido, sumando al pedido activo.
+  const handleOtroPedido = () => {
+    setPaso('pedido');
   };
 
   const subtitulo =
@@ -56,7 +74,7 @@ export default function VentaMesaView() {
         <TomaPedido
           mesa={mesa}
           cajaAbierta={cajaAbierta}
-          onVolver={() => { setMesa(null); setPaso('seleccionar'); }}
+          onVolver={handleVolverAMesas}
           onConfirmado={handleConfirmado}
         />
       )}
@@ -64,8 +82,8 @@ export default function VentaMesaView() {
       {paso === 'exito' && mesa && (
         <PantallaExito
           mesa={mesa}
-          onNuevoPedido={handleNuevoPedido}
-          onVolver={handleNuevoPedido}
+          onNuevoPedido={handleOtroPedido}
+          onVolver={handleVolverAMesas}
         />
       )}
     </div>

@@ -53,12 +53,17 @@ function ModalBase({ title, subtitle, onClose, children, actions }: {
 }
 
 // ─── Modal crear / editar insumo ──────────────────────────────────────────────
+// Nota: se eliminó el campo "costo unitario" del formulario. La métrica de
+// valorización de almacén (y cualquier cálculo de costo) ahora usa `precio`
+// como fuente única de verdad. Internamente seguimos escribiendo `costo`
+// igual a `precio` al guardar, para no romper la columna en la BD ni a
+// otras partes del sistema que puedan leer `producto.costo`.
 interface ProductoForm {
-  nombre: string; categoria: string; precio: string; costo: string;
+  nombre: string; categoria: string; precio: string;
   unidad_medida: string; stock_minimo_cocina: string; stock_cocina: string;
 }
 const PROD_VACIO: ProductoForm = {
-  nombre: '', categoria: '', precio: '0', costo: '0',
+  nombre: '', categoria: '', precio: '0',
   unidad_medida: 'unidades', stock_minimo_cocina: '0', stock_cocina: '0',
 };
 
@@ -69,7 +74,6 @@ function ModalProducto({ producto, onClose, onSaved }: {
     nombre:               producto.nombre,
     categoria:            producto.categoria,
     precio:               String(producto.precio),
-    costo:                String(producto.costo ?? 0),
     unidad_medida:        producto.unidad_medida,
     stock_minimo_cocina:  String(producto.stock_minimo_cocina),
     stock_cocina:         String(producto.stock_cocina ?? 0),
@@ -92,12 +96,15 @@ function ModalProducto({ producto, onClose, onSaved }: {
     if (!form.categoria.trim()) { setError('La categoría es obligatoria'); return; }
     setGuardando(true); setError('');
     try {
+      const precioNum = parseFloat(form.precio) || 0;
       const base = {
         nombre:               form.nombre.trim(),
         categoria:            form.categoria.trim(),
         tipo:                 'insumo' as const,
-        precio:               parseFloat(form.precio) || 0,
-        costo:                parseFloat(form.costo)  || 0,
+        precio:               precioNum,
+        // Se mantiene sincronizado con `precio` para no romper el esquema
+        // ni otras vistas que aún lean `costo` directamente de la BD.
+        costo:                precioNum,
         unidad_medida:        form.unidad_medida || 'unidades',
         stock_cocina:         parseFloat(form.stock_cocina) || 0,
         stock_minimo_cocina:  parseFloat(form.stock_minimo_cocina) || 0,
@@ -163,17 +170,10 @@ function ModalProducto({ producto, onClose, onSaved }: {
           )}
         </div>
 
-        <div className="grid grid-cols-2 gap-3">
-          <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Precio / costo ref. (S/)</label>
-            <input type="number" min="0" step="0.01" value={form.precio} onChange={set('precio')}
-              className={inputCls()} style={INP} />
-          </div>
-          <div>
-            <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Costo unitario (S/)</label>
-            <input type="number" min="0" step="0.01" value={form.costo} onChange={set('costo')}
-              className={inputCls()} style={INP} />
-          </div>
+        <div>
+          <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Precio / costo (S/)</label>
+          <input type="number" min="0" step="0.01" value={form.precio} onChange={set('precio')}
+            className={inputCls()} style={INP} />
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -461,7 +461,10 @@ export function AlmacenView() {
   const paginaSegura = Math.min(pagina, totalPaginas);
   const visibles      = insumos.slice((paginaSegura - 1) * POR_PAGINA, paginaSegura * POR_PAGINA);
 
-  const valorTotal  = insumosBase.reduce((a, p) => a + p.stock_cocina * (p.costo ?? p.precio), 0);
+  // Valor en almacén: se calcula 100% con `precio` (antes usaba
+  // `p.costo ?? p.precio`, pero como `costo` casi siempre llegaba en 0
+  // desde la BD, el "??" nunca entraba en juego y el total salía en 0).
+  const valorTotal  = insumosBase.reduce((a, p) => a + p.stock_cocina * p.precio, 0);
   const bajosAlerta = insumosBase.filter(p => p.stock_cocina < p.stock_minimo_cocina);
 
   return (

@@ -14,7 +14,7 @@ import {
   agregarItemPedido,
   actualizarEstadoMesa,
 } from '@/lib/supabase/queries';
-import { catColor, type ItemCarrito, type MesaRow } from '@/utils/venta-mesa/ventaMesaUtils';
+import type { ItemCarrito, MesaRow } from '@/utils/venta-mesa/ventaMesaUtils';
 import { ESTADO_CFG } from '@/constants/venta-mesa/ventaMesaConstants';
 import { ordenarCategorias } from '@/constants/productos/productosConstants';
 import { ProductoCard } from './ProductoCard';
@@ -243,38 +243,28 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
         {/* Panel catálogo */}
         <div className="flex-1 min-w-0 flex flex-col gap-4">
 
-          {/* Búsqueda */}
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: B.muted }} />
-            <input
-              value={busqueda}
-              onChange={(e) => setBusqueda(e.target.value)}
-              placeholder="Buscar producto..."
-              className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
-              style={{ background: B.white, border: `1px solid ${B.creamDark}`, color: B.charcoal }}
-            />
-          </div>
-
-          {/* Tabs de categoría */}
-          <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: 'none' }}>
-            {categorias.map((cat) => {
-              const activo = categoria === cat;
-              const color  = cat === 'Todas' ? B.charcoal : catColor(cat);
-              return (
-                <button
-                  key={cat}
-                  onClick={() => setCategoria(cat)}
-                  className="shrink-0 px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-                  style={{
-                    background: activo ? color : B.cream,
-                    color:      activo ? '#fff' : B.charcoal,
-                    border:     `1px solid ${activo ? color : B.creamDark}`,
-                  }}
-                >
-                  {cat}
-                </button>
-              );
-            })}
+          {/* Búsqueda + categoría unificados en una sola fila (mismo estilo que Almacén) */}
+          <div className="flex gap-2">
+            <div className="flex-1 relative min-w-0">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style={{ color: B.muted }} />
+              <input
+                value={busqueda}
+                onChange={(e) => setBusqueda(e.target.value)}
+                placeholder="Buscar producto..."
+                className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm outline-none"
+                style={{ background: B.white, border: `1px solid ${B.creamDark}`, color: B.charcoal }}
+              />
+            </div>
+            <select
+              value={categoria}
+              onChange={(e) => setCategoria(e.target.value)}
+              className="py-2.5 px-3 rounded-xl text-sm font-semibold outline-none cursor-pointer shrink-0"
+              style={{ background: B.white, border: `1px solid ${B.creamDark}`, color: B.charcoal, minWidth: 140 }}
+            >
+              {categorias.map((cat) => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
           </div>
 
           {/* Grid de productos */}
