@@ -95,27 +95,9 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('productos:', e); }
   }, []);
 
-  // FIX RACE CONDITION: cuando se disparan varios refetchMesas() casi al
-  // mismo tiempo (ej. agregar 3-4 productos seguidos a un pedido, cada uno
-  // dispara un evento 'pedidos' UPDATE por el trigger de recálculo de total),
-  // no hay garantía de que las respuestas de red lleguen en el mismo orden en
-  // que se dispararon las peticiones. Si una petición vieja (con datos
-  // desactualizados) tarda más en resolver que una más nueva, terminaba
-  // sobrescribiendo el estado bueno con uno obsoleto — por eso a veces la
-  // mesa se quedaba mostrando "disponible" hasta recargar la página.
-  // Este contador descarta cualquier respuesta que no sea la de la petición
-  // más reciente que se disparó, sin importar el orden en que resuelvan.
-  const mesasFetchSeqRef = useRef(0);
-
   const refetchMesas = useCallback(async () => {
-    const seq = ++mesasFetchSeqRef.current;
     try {
       const data = await getMesasConPedido();
-
-      // Si mientras esperábamos esta respuesta ya se disparó una petición
-      // más nueva, esta respuesta está obsoleta: se descarta sin aplicar.
-      if (seq !== mesasFetchSeqRef.current) return;
-
       const seen = new Set<string>();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const unicas = (data as any[]).filter((m: { id: string }) => {
@@ -285,6 +267,17 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       )
 
       // ── MESAS ────────────────────────────────────────────────────────────
+      // FIX: antes este handler hacía un merge parcial con `payload.new`,
+      // que solo trae las columnas reales de la tabla `mesas` (id, numero,
+      // nombre, zona, capacidad, estado, activo, created_at, updated_at).
+      // Los campos que se muestran en la UI (mozo, pedido_id, pedido_total,
+      // pedido_inicio) vienen del JOIN de la vista `v_mesas_con_pedido` y NO
+      // están en ese payload. Si este evento llegaba antes de que terminara
+      // el refetch disparado por el INSERT de `pedidos`, la mesa quedaba
+      // temporalmente con estado='ocupada' pero sin mozo/hora — y a veces no
+      // se autocorregía por la carrera con el canal duplicado que había en
+      // MesasView.tsx (ya eliminado). Ahora se hace refetch completo, igual
+      // que con `pedidos`, para que la vista siempre traiga el dato unido.
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'mesas' },
         () => refetchMesasRef.current()
