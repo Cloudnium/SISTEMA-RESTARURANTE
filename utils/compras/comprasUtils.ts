@@ -44,7 +44,7 @@ export const FORM_VACIO: FormState = {
   descripcion:      '',
   igv_incluido:     true,
   items: [
-    { descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'cocina' },
+    { descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'general' },
   ],
 };
 

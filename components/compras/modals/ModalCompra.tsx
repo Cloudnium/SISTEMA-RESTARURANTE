@@ -39,7 +39,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
         cantidad:        String(i.cantidad),
         precio_unitario: String(i.precio_unitario),
         zona_destino:    i.zona_destino,
-      })) ?? [{ descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'cocina' }],
+      })) ?? [{ descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'general' }],
     };
   });
 
@@ -52,7 +52,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
   const addItem = () =>
     setForm(f => ({
       ...f,
-      items: [...f.items, { descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'cocina' }],
+      items: [...f.items, { descripcion: '', cantidad: '1', precio_unitario: '', zona_destino: 'general' }],
     }));
 
   const removeItem = (idx: number) =>

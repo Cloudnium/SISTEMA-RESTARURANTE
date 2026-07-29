@@ -213,6 +213,13 @@ export async function crearMesa(payload: {
   return data;
 }
 
+export async function cancelarItemPedido(itemId: string): Promise<void> {
+  const { error } = await db
+    .from('pedido_items')
+    .delete()
+    .eq('id', itemId);
+  if (error) throw error;
+}
 // ════════════════════════════════════════════════════════════════════════════
 // PEDIDOS
 // ════════════════════════════════════════════════════════════════════════════
@@ -697,6 +704,20 @@ export async function actualizarCompra(
   }
 
   return data as Compra;
+}
+
+export async function getVentasMes() {
+  const iso = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Lima' }).format(new Date());
+  const prefijoMes = iso.slice(0, 7); // "2026-07"
+
+  const { data, error } = await supabase
+    .from('ventas')
+    .select('total, fecha_local')
+    .eq('estado', 'completada')
+    .gte('fecha_local', `${prefijoMes}-01`)
+    .order('fecha_local');
+  if (error) throw error;
+  return data ?? [];
 }
 
 // ════════════════════════════════════════════════════════════════════════════

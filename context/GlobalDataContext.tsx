@@ -8,7 +8,7 @@ import React, {
 import { useAuth } from '@/lib/auth/AuthContext';
 import {
   getProductos, getMesasConPedido, getClientes, getCajas,
-  getVentasHoy, getVentasRecientes, getVentasSemana,
+  getVentasHoy, getVentasRecientes, getVentasSemana, getVentasMes,
   getComprobantes, getCompras, getUsuarios,
   getProduccionHoy, getNotificacionesSinLeer,
   getMetricasDashboard, getTopProductosHoy,
@@ -31,6 +31,7 @@ interface GlobalDataContextType {
   ventasHoy:           Venta[];
   ventasRecientes:     Venta[];
   ventasSemana:        Array<{ total: number; fecha_local: string }>;
+  ventasMes:           Array<{ total: number; fecha_local: string }>;
   comprobantes:        ComprobanteDetalle[];
   compras:             Compra[];
   produccionHoy:       ProduccionCocina[];
@@ -46,6 +47,7 @@ interface GlobalDataContextType {
   refetchCajas:            () => Promise<void>;
   refetchVentas:           () => Promise<void>;
   refetchVentasRecientes:  () => Promise<void>;
+  refetchVentasMes:        () => Promise<void>;
   refetchComprobantes:     () => Promise<void>;
   refetchCompras:          () => Promise<void>;
   refetchProduccion:       () => Promise<void>;
@@ -73,6 +75,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const [ventasHoy,        setVentasHoy]        = useState<Venta[]>([]);
   const [ventasRecientes,  setVentasRecientes]  = useState<Venta[]>([]);
   const [ventasSemana,     setVentasSemana]     = useState<Array<{ total: number; fecha_local: string }>>([]);
+  const [ventasMes,        setVentasMes]        = useState<Array<{ total: number; fecha_local: string }>>([]);
   const [comprobantes,     setComprobantes]     = useState<ComprobanteDetalle[]>([]);
   const [compras,          setCompras]          = useState<Compra[]>([]);
   const [produccionHoy,    setProduccionHoy]    = useState<ProduccionCocina[]>([]);
@@ -163,6 +166,11 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('ventasRecientes:', e); }
   }, []);
 
+  const refetchVentasMes = useCallback(async () => {
+    try { setVentasMes(await getVentasMes()); }
+    catch (e) { console.error('ventasMes:', e); }
+  }, []);
+
   const refetchNotificaciones = useCallback(async () => {
     const uid = usuarioActualRef.current?.id;
     if (!uid) return;
@@ -184,6 +192,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     Promise.allSettled([
       refetchProductos(),
       refetchVentasRecientes(),
+      refetchVentasMes(),
       refetchClientes(),
       refetchCajas(),
       refetchMetricas(),
@@ -198,18 +207,12 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     });
   }, [
     refetchMesas, refetchVentas,
-    refetchProductos, refetchVentasRecientes, refetchClientes,
+    refetchProductos, refetchVentasRecientes, refetchVentasMes, refetchClientes,
     refetchCajas, refetchMetricas, refetchTopProductos,
     refetchComprobantes, refetchCompras, refetchProduccion, refetchUsuarios,
   ]);
 
   // ── Carga inicial (una sola vez) ───────────────────────────────────────────
-  // FIX RENDIMIENTO: antes este efecto hacía su propia llamada a
-  // supabase.auth.getSession() / onAuthStateChange en paralelo a AuthContext,
-  // duplicando un round-trip a Supabase que ya se estaba haciendo allá.
-  // Ahora simplemente reacciona al estado ya resuelto de AuthContext
-  // (usuario / loading), que es la misma fuente de verdad y llega apenas
-  // AuthContext termina de verificar sesión + cargar perfil.
   useEffect(() => {
     if (authLoading) return; // AuthContext aún resolviendo la sesión
 
@@ -224,7 +227,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   }, [usuarioActual, authLoading, refetchAll]);
 
   // ── Refs estables para el canal Realtime ──────────────────────────────────
-  const refetchProductosRef       = useRef(refetchProductos);       // ← FIX: ref para productos
+  const refetchProductosRef       = useRef(refetchProductos);
   const refetchMesasRef           = useRef(refetchMesas);
   const refetchNotificacionesRef  = useRef(refetchNotificaciones);
   const refetchUsuariosRef        = useRef(refetchUsuarios);
@@ -234,9 +237,10 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const refetchTopProductosRef    = useRef(refetchTopProductos);
   const refetchVentasRef          = useRef(refetchVentas);
   const refetchVentasRecientesRef = useRef(refetchVentasRecientes);
+  const refetchVentasMesRef       = useRef(refetchVentasMes);
   const refetchMetricasRef        = useRef(refetchMetricas);
 
-  useEffect(() => { refetchProductosRef.current       = refetchProductos;       }, [refetchProductos]);  // ← FIX
+  useEffect(() => { refetchProductosRef.current       = refetchProductos;       }, [refetchProductos]);
   useEffect(() => { refetchMesasRef.current           = refetchMesas;           }, [refetchMesas]);
   useEffect(() => { refetchNotificacionesRef.current  = refetchNotificaciones;  }, [refetchNotificaciones]);
   useEffect(() => { refetchUsuariosRef.current        = refetchUsuarios;        }, [refetchUsuarios]);
@@ -246,6 +250,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => { refetchTopProductosRef.current    = refetchTopProductos;    }, [refetchTopProductos]);
   useEffect(() => { refetchVentasRef.current          = refetchVentas;          }, [refetchVentas]);
   useEffect(() => { refetchVentasRecientesRef.current = refetchVentasRecientes; }, [refetchVentasRecientes]);
+  useEffect(() => { refetchVentasMesRef.current       = refetchVentasMes;       }, [refetchVentasMes]);
   useEffect(() => { refetchMetricasRef.current        = refetchMetricas;        }, [refetchMetricas]);
 
   // ── Canal Realtime único ──────────────────────────────────────────────────
@@ -253,10 +258,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     const canal = supabase
       .channel('global-realtime')
 
-      // ── PRODUCTOS → refetch cuando BD descuenta/restaura stock ───────────
-      // El trigger de BD modifica stock_tienda directamente en la tabla,
-      // por eso necesitamos escuchar UPDATE aquí para reflejar el cambio.
-      // Requiere: ALTER PUBLICATION supabase_realtime ADD TABLE public.productos;
+      // ── PRODUCTOS ──────────────────────────────────────────────────────
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'productos' },
         () => refetchProductosRef.current()
@@ -267,17 +269,6 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       )
 
       // ── MESAS ────────────────────────────────────────────────────────────
-      // FIX: antes este handler hacía un merge parcial con `payload.new`,
-      // que solo trae las columnas reales de la tabla `mesas` (id, numero,
-      // nombre, zona, capacidad, estado, activo, created_at, updated_at).
-      // Los campos que se muestran en la UI (mozo, pedido_id, pedido_total,
-      // pedido_inicio) vienen del JOIN de la vista `v_mesas_con_pedido` y NO
-      // están en ese payload. Si este evento llegaba antes de que terminara
-      // el refetch disparado por el INSERT de `pedidos`, la mesa quedaba
-      // temporalmente con estado='ocupada' pero sin mozo/hora — y a veces no
-      // se autocorregía por la carrera con el canal duplicado que había en
-      // MesasView.tsx (ya eliminado). Ahora se hace refetch completo, igual
-      // que con `pedidos`, para que la vista siempre traiga el dato unido.
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'mesas' },
         () => refetchMesasRef.current()
@@ -307,7 +298,6 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
             setVentasHoy(prev => [nueva, ...prev]);
           }
           if (nueva.estado === 'completada') {
-            // ← CAMBIO: refetch con delay para que el trigger de comprobante termine
             setTimeout(() => {
               refetchVentasRecientesRef.current();
               refetchMetricasRef.current();
@@ -315,6 +305,10 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
             }, 800);
           }
           setVentasSemana(prev => [
+            ...prev,
+            { total: nueva.total ?? 0, fecha_local: nueva.fecha_local },
+          ]);
+          setVentasMes(prev => [
             ...prev,
             { total: nueva.total ?? 0, fecha_local: nueva.fecha_local },
           ]);
@@ -335,19 +329,18 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
           );
 
           if (actualizada.estado === 'anulada') {
-            // Refetch completo con delay para que los triggers de BD terminen
             setTimeout(() => {
               Promise.allSettled([
                 refetchVentasRef.current(),
                 refetchVentasRecientesRef.current(),
+                refetchVentasMesRef.current(),
                 refetchMetricasRef.current(),
                 refetchTopProductosRef.current(),
-                refetchComprobantesRef.current(),   // ← FIX: actualiza página comprobantes
-                refetchProductosRef.current(),      // ← FIX: restaura stock en catálogo
+                refetchComprobantesRef.current(),
+                refetchProductosRef.current(),
               ]);
             }, 500);
 
-            // Actualización optimista inmediata de métricas
             setVentasHoy(prev => {
               const ventasActivas = prev
                 .map(v => v.id === actualizada.id ? { ...v, ...actualizada } : v)
@@ -411,14 +404,14 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         { event: 'INSERT', schema: 'public', table: 'cajas' },
           () => {
           refetchCajasRef.current();
-          refetchUsuariosRef.current(); // ← AGREGAR
+          refetchUsuariosRef.current();
         }
       )
       .on('postgres_changes',
         { event: 'DELETE', schema: 'public', table: 'cajas' },
         (payload) => {
           setCajas(prev => prev.filter(c => c.id !== payload.old.id));
-          refetchUsuariosRef.current(); // ← AGREGAR
+          refetchUsuariosRef.current();
         }
       )
 
@@ -431,7 +424,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         { event: 'UPDATE', schema: 'public', table: 'usuarios' },
           () => {
             refetchUsuariosRef.current();
-            refetchCajasRef.current(); // ← AGREGAR
+            refetchCajasRef.current();
           }
       )
       .on('postgres_changes',
@@ -455,23 +448,23 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   // ── Valor del contexto ────────────────────────────────────────────────────
   const value = useMemo<GlobalDataContextType>(() => ({
     productos, mesas, clientes, cajas,
-    ventasHoy, ventasRecientes, ventasSemana,
+    ventasHoy, ventasRecientes, ventasSemana, ventasMes,
     comprobantes, compras, produccionHoy, usuarios, notificaciones,
     metricas, topProductosHoy,
     isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
-    refetchVentas, refetchVentasRecientes, refetchComprobantes,
+    refetchVentas, refetchVentasRecientes, refetchVentasMes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,
     refetchNotificaciones, refetchMetricas, refetchTopProductos,
     refetchAll,
   }), [
     productos, mesas, clientes, cajas,
-    ventasHoy, ventasRecientes, ventasSemana,
+    ventasHoy, ventasRecientes, ventasSemana, ventasMes,
     comprobantes, compras, produccionHoy, usuarios, notificaciones,
     metricas, topProductosHoy,
     isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
-    refetchVentas, refetchVentasRecientes, refetchComprobantes,
+    refetchVentas, refetchVentasRecientes, refetchVentasMes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchUsuarios,
     refetchNotificaciones, refetchMetricas, refetchTopProductos,
     refetchAll,

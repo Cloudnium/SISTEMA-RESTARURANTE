@@ -9,15 +9,16 @@ import type { Compra } from '@/lib/supabase/types';
 import type { MetricasDashboard } from '@/lib/supabase/queries';
 
 interface ComprasKpisProps {
-  compras:  Compra[];
-  metricas: MetricasDashboard | null;
+  compras:   Compra[];
+  metricas:  MetricasDashboard | null;
+  ventasMes: Array<{ total: number; fecha_local: string }>;
 }
 
-export function ComprasKpis({ compras, metricas }: ComprasKpisProps) {
+export function ComprasKpis({ compras, metricas, ventasMes }: ComprasKpisProps) {
   const { totalMes, totalRegistrado, promedio } = useMemo(() => {
     // Mes y año actuales en hora peruana
-    const ahora   = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' }); // "2026-06-16"
-    const prefijo = ahora.slice(0, 7); // "2026-06"
+    const ahora   = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' }); // "2026-07-29"
+    const prefijo = ahora.slice(0, 7); // "2026-07"
 
     const delMes  = compras.filter(c => c.fecha_emision.startsWith(prefijo));
     const totalM  = delMes.reduce((a, c) => a + c.total, 0);
@@ -30,6 +31,12 @@ export function ComprasKpis({ compras, metricas }: ComprasKpisProps) {
 
   const ventasHoy = metricas?.ventasHoy ?? 0;
 
+  // Ventas del mes: suma real de todas las ventas completadas del mes en curso
+  const ventasMesTotal = useMemo(
+    () => ventasMes.reduce((a, v) => a + (v.total ?? 0), 0),
+    [ventasMes],
+  );
+
   return (
     <div className="grid grid-cols-2 xl:grid-cols-5 gap-4 mb-5">
       <KpiCard
@@ -41,7 +48,7 @@ export function ComprasKpis({ compras, metricas }: ComprasKpisProps) {
       />
       <KpiCard
         label="Ventas del Mes"
-        value={`S/ ${ventasHoy.toFixed(2)}`}
+        value={`S/ ${ventasMesTotal.toFixed(2)}`}
         sub="Ingresos mes"
         icon={DollarSign}
         color={B.green}
@@ -55,7 +62,7 @@ export function ComprasKpis({ compras, metricas }: ComprasKpisProps) {
       />
       <KpiCard
         label="Diferencia Mes"
-        value={`S/ ${(ventasHoy - totalMes).toFixed(2)}`}
+        value={`S/ ${(ventasMesTotal - totalMes).toFixed(2)}`}
         icon={DollarSign}
         color={B.gold}
       />

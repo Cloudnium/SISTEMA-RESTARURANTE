@@ -13,13 +13,15 @@ import {
   crearPedido,
   agregarItemPedido,
   actualizarEstadoMesa,
+  cancelarItemPedido,
 } from '@/lib/supabase/queries';
 import type { ItemCarrito, MesaRow } from '@/utils/venta-mesa/ventaMesaUtils';
 import { ESTADO_CFG } from '@/constants/venta-mesa/ventaMesaConstants';
 import { ordenarCategorias } from '@/constants/productos/productosConstants';
 import { ProductoCard } from './ProductoCard';
 import { CarritoPanel } from './CarritoPanel';
-import type { Producto } from '@/lib/supabase/types';
+import { ItemsPedidoActivo } from './ItemsPedidoActivo';
+import type { Producto, PedidoItem } from '@/lib/supabase/types';
 
 interface TomaPedidoProps {
   mesa:          MesaRow;
@@ -34,7 +36,6 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
   const { productos: todosProductos } = useGlobalData();
 
   // ── Catálogo filtrado para venta (tipo venta + stock_tienda > 0) ──────────
-  // Lo filtramos aquí en cliente para no hacer un fetch extra
   const productos = useMemo(
     () =>
       todosProductos.filter(
@@ -43,12 +44,13 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
     [todosProductos],
   );
 
-  // ── Carrito ───────────────────────────────────────────────────────────────
+  // ── Carrito (ítems NUEVOS, aún no guardados en BD) ────────────────────────
   const [carrito,      setCarrito]      = useState<ItemCarrito[]>([]);
   const [notas,        setNotas]        = useState<Record<string, string>>({});
 
   // ── Pedido existente (si mesa ya estaba ocupada) ──────────────────────────
   const [pedidoId,     setPedidoId]     = useState<string | null>(null);
+  const [itemsPedido,  setItemsPedido]  = useState<PedidoItem[]>([]);
   const [cargPedido,   setCargPedido]   = useState(true);
 
   // ── Filtros catálogo ──────────────────────────────────────────────────────
@@ -60,14 +62,17 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
   const [error,        setError]        = useState('');
   const [panelCarrito, setPanelCarrito] = useState(false);
 
-  // ── Cargar pedido activo de la mesa ───────────────────────────────────────
+  // ── Cargar pedido activo de la mesa (con sus ítems ya enviados) ───────────
   useEffect(() => {
     let mounted = true;
     (async () => {
       if (mesa.estado === 'ocupada') {
         try {
           const p = await getPedidoActivoMesa(mesa.id);
-          if (mounted && p) setPedidoId(p.id);
+          if (mounted && p) {
+            setPedidoId(p.id);
+            setItemsPedido(p.items ?? []);
+          }
         } finally {
           if (mounted) setCargPedido(false);
         }
@@ -97,7 +102,7 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
     });
   }, [productos, busqueda, categoria]);
 
-  // ── Totales del carrito ───────────────────────────────────────────────────
+  // ── Totales del carrito (solo ítems nuevos, aún no confirmados) ───────────
   const totalItems = useMemo(
     () => carrito.reduce((s, i) => s + i.cantidad, 0),
     [carrito],
@@ -141,6 +146,12 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
       carrito.find((i) => i.producto.id === productoId)?.cantidad ?? 0,
     [carrito],
   );
+
+  // ── Cancelar UN ítem ya enviado a cocina (no toca el resto del pedido) ────
+  const handleCancelarItem = useCallback(async (itemId: string) => {
+    await cancelarItemPedido(itemId);
+    setItemsPedido((prev) => prev.filter((i) => i.id !== itemId));
+  }, []);
 
   // ── Confirmar pedido ──────────────────────────────────────────────────────
   const confirmarPedido = useCallback(async () => {
@@ -236,6 +247,9 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
           )}
         </button>
       </div>
+
+      {/* ── Ítems ya enviados a cocina — cancelables individualmente ── */}
+      <ItemsPedidoActivo items={itemsPedido} onCancelarItem={handleCancelarItem} />
 
       {/* ── Layout principal ── */}
       <div className="flex gap-5 flex-1 min-h-0">

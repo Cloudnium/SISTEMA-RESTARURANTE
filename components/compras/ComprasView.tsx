@@ -17,7 +17,7 @@ import { ModalCompra }   from './modals/ModalCompra';
 
 // ─── Vista principal ──────────────────────────────────────────────────────────
 export function ComprasView() {
-  const { compras, isLoading, refetchCompras, metricas } = useGlobalData();
+  const { compras, isLoading, refetchCompras, metricas, ventasMes } = useGlobalData();
 
   // ── Filtros ────────────────────────────────────────────────────────────────
   const [busqueda,   setBusqueda]   = useState('');
@@ -78,7 +78,7 @@ export function ComprasView() {
       />
 
       {/* KPIs */}
-      <ComprasKpis compras={compras} metricas={metricas} />
+      <ComprasKpis compras={compras} metricas={metricas} ventasMes={ventasMes} />
 
       {/* Error de eliminación */}
       {elimError && (
