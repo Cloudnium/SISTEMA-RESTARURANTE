@@ -95,9 +95,27 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('productos:', e); }
   }, []);
 
+  // FIX RACE CONDITION: cuando se disparan varios refetchMesas() casi al
+  // mismo tiempo (ej. agregar 3-4 productos seguidos a un pedido, cada uno
+  // dispara un evento 'pedidos' UPDATE por el trigger de recálculo de total),
+  // no hay garantía de que las respuestas de red lleguen en el mismo orden en
+  // que se dispararon las peticiones. Si una petición vieja (con datos
+  // desactualizados) tarda más en resolver que una más nueva, terminaba
+  // sobrescribiendo el estado bueno con uno obsoleto — por eso a veces la
+  // mesa se quedaba mostrando "disponible" hasta recargar la página.
+  // Este contador descarta cualquier respuesta que no sea la de la petición
+  // más reciente que se disparó, sin importar el orden en que resuelvan.
+  const mesasFetchSeqRef = useRef(0);
+
   const refetchMesas = useCallback(async () => {
+    const seq = ++mesasFetchSeqRef.current;
     try {
       const data = await getMesasConPedido();
+
+      // Si mientras esperábamos esta respuesta ya se disparó una petición
+      // más nueva, esta respuesta está obsoleta: se descarta sin aplicar.
+      if (seq !== mesasFetchSeqRef.current) return;
+
       const seen = new Set<string>();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const unicas = (data as any[]).filter((m: { id: string }) => {
@@ -269,11 +287,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       // ── MESAS ────────────────────────────────────────────────────────────
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'mesas' },
-        (payload) => {
-          setMesas(prev =>
-            prev.map(m => m.id === payload.new.id ? { ...m, ...payload.new } : m)
-          );
-        }
+        () => refetchMesasRef.current()
       )
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'mesas' },

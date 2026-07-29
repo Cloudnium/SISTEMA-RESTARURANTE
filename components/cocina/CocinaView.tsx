@@ -13,12 +13,21 @@ import type { Pedido, PedidoItem, EstadoPedido } from '@/lib/supabase/types';
 import {
   construirTickets, minutosDesde, cfgUrgencia, type TicketCocina,
 } from '@/utils/cocina/cocinaUtils';
+import { corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 
 const REFRESCO_FALLBACK_MS = 45_000; // poll de respaldo por si el realtime se cae
 const TICK_MS               = 30_000; // recalcula minutos de espera en pantalla
 
+// FIX: aplica la misma corrección de offset de 5h (utils/mesas/useElapsedTime)
+// que ya usas en Mesas/Venta Mesa, para que la hora mostrada sea la real.
 function fmtHora(iso: string) {
-  return new Date(iso).toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
+  const corregida = corregirFechaBD(iso);
+  if (!corregida) return '';
+  return corregida.toLocaleTimeString('es-PE', {
+    timeZone: 'America/Lima',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 }
 
 // ─── Fila de item dentro de un ticket ─────────────────────────────────────────

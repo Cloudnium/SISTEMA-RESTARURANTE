@@ -191,6 +191,16 @@ export async function actualizarEstadoMesa(id: string, estado: EstadoMesa) {
   if (error) throw error;
 }
 
+// ── NUEVO: cancela el pedido activo de la mesa (si existe) sin tocar
+// stock, y libera la mesa. Todo atómico vía RPC (fn_cancelar_mesa). ──────────
+export async function cancelarMesa(mesaId: string, usuarioId: string): Promise<void> {
+  const { error } = await db.rpc('fn_cancelar_mesa', {
+    p_mesa_id:    mesaId,
+    p_usuario_id: usuarioId,
+  });
+  if (error) throw error;
+}
+
 export async function crearMesa(payload: {
   numero: string; nombre: string; zona: string; capacidad: number; estado?: EstadoMesa;
 }) {

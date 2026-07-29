@@ -1,14 +1,13 @@
 // components/mesas/MesasView.tsx
 'use client';
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Plus, Loader2 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
-import { supabase } from '@/lib/supabase/client';
-import { actualizarEstadoMesa } from '@/lib/supabase/queries';
+import { actualizarEstadoMesa, cancelarMesa } from '@/lib/supabase/queries';
 import type { EstadoMesa } from '@/lib/supabase/types';
 
 import { ESTADOS, ESTADOS_CIERRAN_MODAL } from '@/constants/mesas/mesasConstants';
@@ -39,21 +38,11 @@ export default function MesasView() {
     return caja?.estado === 'abierta';
   }, [cajas, usuario]);
 
-  // ── Realtime ──────────────────────────────────────────────────────────────
-  useEffect(() => {
-    const channel = supabase
-      .channel('mesas-realtime')
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'mesas' },
-        () => refetchMesas().catch(console.error),
-      )
-      .on('postgres_changes',
-        { event: '*', schema: 'public', table: 'pedidos' },
-        () => refetchMesas().catch(console.error),
-      )
-      .subscribe();
-    return () => { supabase.removeChannel(channel); };
-  }, [refetchMesas]);
+  // NOTA: el realtime de `mesas` y `pedidos` ya se maneja de forma
+  // centralizada en GlobalDataContext (canal 'global-realtime'). Antes este
+  // componente abría un segundo canal duplicado escuchando las mismas tablas,
+  // lo cual generaba condiciones de carrera y refetch redundantes. Se eliminó
+  // ese efecto — refetchMesas() ya llega solo vía el contexto global.
 
   // ── Datos derivados ───────────────────────────────────────────────────────
   const zonas = useMemo(
@@ -92,6 +81,26 @@ export default function MesasView() {
       refetchMesas().catch(console.error);
     } catch (e) {
       console.error('Error al cambiar estado:', e);
+      refetchMesas().catch(console.error);
+    } finally {
+      setCambiando(false);
+    }
+  };
+
+  // ── Cancelar mesa ─────────────────────────────────────────────────────────
+  // Distinto de "cambiar estado": esta acción SÍ funciona con pedido activo.
+  // Cancela el pedido (y sus items) sin tocar stock, y libera la mesa —
+  // todo en una sola transacción vía RPC (fn_cancelar_mesa).
+  const handleCancelarMesa = async (id: string) => {
+    if (cambiando) return;
+
+    setCambiando(true);
+    try {
+      await cancelarMesa(id, usuario?.id ?? '');
+      setSelectedId(null);
+      refetchMesas().catch(console.error);
+    } catch (e) {
+      console.error('Error al cancelar mesa:', e);
       refetchMesas().catch(console.error);
     } finally {
       setCambiando(false);
@@ -175,6 +184,7 @@ export default function MesasView() {
           cajaAbierta={cajaAbierta}
           onClose={() => setSelectedId(null)}
           onCambiarEstado={handleCambiarEstado}
+          onCancelarMesa={handleCancelarMesa}
           cambiando={cambiando}
         />
       )}

@@ -19,10 +19,13 @@ interface Props {
   cajaAbierta:     boolean;       // ← nueva prop recibida desde MesasView
   onClose:         () => void;
   onCambiarEstado: (id: string, estado: EstadoMesa) => Promise<void>;
+  onCancelarMesa:  (id: string) => Promise<void>;   // ← NUEVO: cancela pedido + libera mesa
   cambiando:       boolean;
 }
 
-export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado, cambiando }: Props) {
+export default function MesaModal({
+  mesa, cajaAbierta, onClose, onCambiarEstado, onCancelarMesa, cambiando,
+}: Props) {
   const { usuario } = useAuth();
   const estado: EstadoMesa = mesa.estado ?? 'disponible';
   const est = ESTADOS[estado];
@@ -48,6 +51,23 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
   }, []);
+
+  // ── Cancelar mesa ─────────────────────────────────────────────────────────
+  // A diferencia de "Cambiar Estado", esta acción SÍ funciona con pedido
+  // activo: cancela el pedido (sin tocar stock) y libera la mesa. Si hay
+  // consumo sin cobrar, pide confirmación antes de proceder.
+  const handleCancelarClick = () => {
+    if (cambiando) return;
+
+    if (tienePedidoActivo) {
+      const ok = window.confirm(
+        `Esta mesa tiene un consumo de ${consumo} sin cobrar. ¿Cancelar el pedido de todas formas? Esta acción no se puede deshacer.`,
+      );
+      if (!ok) return;
+    }
+
+    onCancelarMesa(mesa.id);
+  };
 
   return (
     <>
@@ -246,17 +266,18 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
               <Receipt className="w-4 h-4" />Ver Cuenta
             </button>
 
+            {/* Cancelar Mesa — ahora SÍ funciona con pedido activo:
+                cancela el pedido (sin tocar stock) y libera la mesa. */}
             <button
-              onClick={() => !tienePedidoActivo && onCambiarEstado(mesa.id, 'disponible')}
-              disabled={cambiando || tienePedidoActivo}
-              title={tienePedidoActivo ? 'Cobra la mesa antes de cancelarla' : undefined}
+              onClick={handleCancelarClick}
+              disabled={cambiando}
               className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50"
               style={{
                 background: '#EF4444',
                 color: '#fff',
-                cursor: tienePedidoActivo ? 'not-allowed' : 'pointer',
+                cursor: cambiando ? 'not-allowed' : 'pointer',
               }}
-              onMouseEnter={e => { if (!tienePedidoActivo) e.currentTarget.style.opacity = '0.88'; }}
+              onMouseEnter={e => { if (!cambiando) e.currentTarget.style.opacity = '0.88'; }}
               onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
             >
               <X className="w-4 h-4" />Cancelar Mesa

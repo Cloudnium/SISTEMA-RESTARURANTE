@@ -4,7 +4,8 @@
 import { ChevronRight, Users, Clock } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { ESTADO_CFG } from '@/constants/venta-mesa/ventaMesaConstants';
-import { fmtSoles, fmtHora, type MesaRow } from '@/utils/venta-mesa/ventaMesaUtils';
+import { fmtSoles, type MesaRow } from '@/utils/venta-mesa/ventaMesaUtils';
+import { useElapsedMinutes, fmtDuracion, corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 import IlustracionMesa from '@/components/mesas/IlustracionMesa'; // ← importar
 
 interface MesaCardProps {
@@ -15,6 +16,13 @@ interface MesaCardProps {
 export function MesaCard({ mesa, onSelect }: MesaCardProps) {
   const cfg = ESTADO_CFG[mesa.estado ?? 'disponible'];
   const bloqueada = mesa.estado === 'limpieza' || mesa.estado === 'reservada';
+
+  // Hora de inicio (ya corregida por el offset de 5h de la BD) y minutos
+  // transcurridos recalculados en vivo en el cliente — mismo mecanismo que
+  // components/mesas/MesaCard.tsx, para que ambas vistas muestren lo mismo.
+  const horaInicio = corregirFechaBD(mesa.pedido_inicio);
+  const minutosTranscurridos = useElapsedMinutes(mesa.pedido_inicio);
+  const duracion = fmtDuracion(minutosTranscurridos);
 
   return (
     <button
@@ -83,12 +91,16 @@ export function MesaCard({ mesa, onSelect }: MesaCardProps) {
                   {fmtSoles(mesa.pedido_total)}
                 </p>
               )}
-              {mesa.pedido_inicio && (
+              {horaInicio && (
                 <div className="flex items-center gap-1">
                   <Clock className="w-3 h-3 shrink-0" style={{ color: B.muted }} />
                   <span className="text-[10px]" style={{ color: B.muted }}>
-                    {fmtHora(mesa.pedido_inicio)}
-                    {mesa.minutos_ocupada != null && ` · ${mesa.minutos_ocupada}min`}
+                    {horaInicio.toLocaleTimeString('es-PE', {
+                      timeZone: 'America/Lima',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                    {duracion && ` · ${duracion}`}
                   </span>
                 </div>
               )}
