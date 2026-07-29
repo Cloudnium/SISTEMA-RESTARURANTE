@@ -13,7 +13,7 @@ export const CATEGORIAS_PRODUCTO: string[] = [
   'Desayunos',
   'Entradas',
   'Sopas y Cremas',
-  'Piqueos',
+  'Piqueos y Entremeses',
   'Ensaladas',
   'Platos de Fondo',
   'Menú del Día',
@@ -22,7 +22,7 @@ export const CATEGORIAS_PRODUCTO: string[] = [
   'Pizzas',
   'Sándwiches y Hamburguesas',
   'Comida Rápida',
-  'Guarniciones',
+  'Guarniciones y Adicionales',
   'Salsas y Aderezos',
   'Panadería',
   'Pastelería y Tortas',
@@ -44,16 +44,46 @@ export const CATEGORIAS_PRODUCTO: string[] = [
 // modo "categoría personalizada". Nunca se guarda en la base de datos.
 export const CATEGORIA_OTRA = '__otra__';
 
+// Lista maestra de categorías de INSUMOS (materia prima de almacén: Lácteos,
+// Cereales, etc.). Es distinta de CATEGORIAS_PRODUCTO porque conceptualmente
+// son cosas distintas: un insumo no es un producto de venta del menú.
+export const CATEGORIAS_INSUMO: string[] = [
+  'Lácteos',
+  'Huevos',
+  'Carnes y Embutidos',
+  'Aves',
+  'Pescados y Mariscos',
+  'Verduras y Hortalizas',
+  'Frutas',
+  'Cereales y Granos',
+  'Harinas y Insumos de Panadería',
+  'Insumos Secos',
+  'Condimentos y Especias',
+  'Aceites y Grasas',
+  'Endulzantes',
+  'Chocolatería y Coberturas',
+  'Frutos Secos',
+  'Conservas',
+  'Congelados',
+  'Bebidas e Insumos Líquidos',
+  'Envases y Empaques',
+  'Limpieza e Higiene',
+  'Desechables',
+  'Gas y Combustible',
+  'Otros',
+];
+
 /**
  * Ordena una lista de categorías (por ejemplo, las que ya tienen productos)
- * siguiendo el orden lógico de CATEGORIAS_PRODUCTO. Cualquier categoría que
- * no esté en la lista maestra (dato legado / personalizado) se muestra al
- * final, ordenada alfabéticamente. No filtra ni oculta nada — solo ordena.
+ * siguiendo el orden lógico de una lista maestra (por defecto CATEGORIAS_PRODUCTO,
+ * pero también sirve para CATEGORIAS_INSUMO pasándola como segundo argumento).
+ * Cualquier categoría que no esté en la lista maestra (dato legado / personalizado)
+ * se muestra al final, ordenada alfabéticamente. No filtra ni oculta nada — solo ordena.
  */
-export function ordenarCategorias(categorias: string[]): string[] {
+export function ordenarCategorias(categorias: string[], listaBase: string[] = CATEGORIAS_PRODUCTO): string[] {
   return [...categorias].sort((a, b) => {
-    const ia = CATEGORIAS_PRODUCTO.indexOf(a);
-    const ib = CATEGORIAS_PRODUCTO.indexOf(b);
+    const ia = listaBase.indexOf(a);
+    const ib = listaBase.indexOf(b);
     if (ia === -1 && ib === -1) return a.localeCompare(b);
     if (ia === -1) return 1;
     if (ib === -1) return -1;

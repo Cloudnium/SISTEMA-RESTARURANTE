@@ -11,6 +11,7 @@ import { PageHeader, Btn, Card, ProgressBar, Paginacion } from '@/components/ui'
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { crearProducto, actualizarProducto, ajustarStockInsumo } from '@/lib/supabase/queries';
+import { CATEGORIAS_INSUMO, CATEGORIA_OTRA, ordenarCategorias } from '@/constants/productos/productosConstants';
 import type { Producto } from '@/lib/supabase/types';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -76,6 +77,13 @@ function ModalProducto({ producto, onClose, onSaved }: {
   const [guardando, setGuardando] = useState(false);
   const [error,     setError]     = useState('');
 
+  // La categoría es texto libre en la BD, pero en el formulario se elige de
+  // una lista predefinida. Si el insumo (editar) trae una categoría que no
+  // está en la lista (dato legado), arrancamos en modo "otra" para no perderla.
+  const [modoCategoria, setModoCategoria] = useState<'lista' | 'otra'>(
+    producto && producto.categoria && !CATEGORIAS_INSUMO.includes(producto.categoria) ? 'otra' : 'lista',
+  );
+
   const set = (key: keyof ProductoForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [key]: e.target.value }));
 
@@ -128,17 +136,31 @@ function ModalProducto({ producto, onClose, onSaved }: {
         </button>
       </>}>
       <div className="space-y-4">
-        <div className="grid grid-cols-1 gap-3">
-          {([
-            { key: 'nombre' as const,    label: 'Nombre del insumo', ph: 'Ej: Huevo, Gelatina en polvo 100g...' },
-            { key: 'categoria' as const, label: 'Categoría',         ph: 'Ej: Lácteos, Cereales, Insumos secos...' },
-          ]).map(({ key, label, ph }) => (
-            <div key={key}>
-              <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>{label}</label>
-              <input type="text" value={form[key]} onChange={set(key)}
-                placeholder={ph} className={inputCls()} style={INP} />
-            </div>
-          ))}
+        <div>
+          <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Nombre del insumo</label>
+          <input type="text" value={form.nombre} onChange={set('nombre')}
+            placeholder="Ej: Huevo, Gelatina en polvo 100g..." className={inputCls()} style={INP} />
+        </div>
+
+        <div>
+          <label className="text-xs font-black uppercase tracking-wide block mb-1.5" style={{ color: B.muted }}>Categoría</label>
+          <select
+            value={modoCategoria === 'otra' ? CATEGORIA_OTRA : form.categoria}
+            onChange={e => {
+              const val = e.target.value;
+              if (val === CATEGORIA_OTRA) { setModoCategoria('otra'); setForm(f => ({ ...f, categoria: '' })); }
+              else                        { setModoCategoria('lista'); setForm(f => ({ ...f, categoria: val })); }
+            }}
+            className={inputCls()} style={INP}>
+            <option value="" disabled>Selecciona una categoría</option>
+            {CATEGORIAS_INSUMO.map(c => <option key={c} value={c}>{c}</option>)}
+            <option value={CATEGORIA_OTRA}>Otra (escribir manualmente)</option>
+          </select>
+          {modoCategoria === 'otra' && (
+            <input type="text" value={form.categoria} onChange={set('categoria')}
+              placeholder="Escribe la categoría"
+              className={inputCls('mt-2')} style={INP} />
+          )}
         </div>
 
         <div className="grid grid-cols-2 gap-3">
@@ -413,7 +435,7 @@ export function AlmacenView() {
   );
 
   const categorias = useMemo(() => {
-    const cats = [...new Set(insumosBase.map(p => p.categoria))].sort();
+    const cats = ordenarCategorias([...new Set(insumosBase.map(p => p.categoria))], CATEGORIAS_INSUMO);
     return ['Todos', ...cats];
   }, [insumosBase]);
 
