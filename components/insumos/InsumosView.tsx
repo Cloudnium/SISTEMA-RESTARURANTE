@@ -41,6 +41,7 @@ export default function InsumosView() {
   }, [insumos]);
 
   const bajos = insumos.filter(i => i.stock_tienda < i.stock_minimo_tienda);
+  const agotados = insumos.filter(i => i.stock_tienda <= 0);
 
   const filtrados = useMemo(() => insumos.filter(i => {
     const matchQ = i.nombre.toLowerCase().includes(busqueda.toLowerCase());
@@ -89,10 +90,11 @@ export default function InsumosView() {
         </div>
       )}
 
-      <div className="grid grid-cols-3 gap-4 mb-5">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-5">
         {[
           { label: 'Total Productos',value: insumos.length,              unit: 'productos',    color: B.charcoal },
-          { label: 'Stock Bajo',     value: bajos.length,                unit: 'por reponer',  color: B.terra    },
+          { label: 'Stock Agotado',  value: agotados.length,             unit: 'sin stock',    color: B.terra    },
+          { label: 'Stock Bajo',     value: bajos.length,                unit: 'por reponer',  color: B.gold     },
           { label: 'Valor en Tienda',value: `S/ ${Math.round(valorTotal)}`,unit: 'estimado',  color: B.green    },
         ].map(s => (
           <Card key={s.label}>

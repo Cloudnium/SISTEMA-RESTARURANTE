@@ -4,7 +4,7 @@
 import React, { useState, useMemo } from 'react';
 import {
   Search, X, Package, AlertTriangle, ArrowUpDown, Loader2, Plus,
-  TrendingDown, TrendingUp,
+  TrendingDown, TrendingUp, FileSpreadsheet, Download,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Btn, Card, ProgressBar, Paginacion } from '@/components/ui';
@@ -12,6 +12,9 @@ import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { crearProducto, actualizarProducto, ajustarStockInsumo } from '@/lib/supabase/queries';
 import { CATEGORIAS_INSUMO, CATEGORIA_OTRA, ordenarCategorias } from '@/constants/productos/productosConstants';
+import { exportarAlmacenExcel } from '@/utils/almacen/exportarAlmacenExcel';
+import { exportarAlmacenPdf } from '@/utils/almacen/exportarAlmacenPdf';
+import { LOGO_MADRE_BASE64 } from '@/constants/logo/logoMadre';
 import type { Producto } from '@/lib/supabase/types';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
@@ -427,6 +430,8 @@ export function AlmacenView() {
   const [modalAjuste,setModalAjuste]=useState<Producto | null>(null);
   const [modalProd,  setModalProd] = useState<{ open: boolean; producto: Producto | null }>({ open: false, producto: null });
   const [pagina,     setPagina]    = useState(1);
+  const [exportando,       setExportando]       = useState(false);
+  const [exportandoExcel,  setExportandoExcel]  = useState(false);
   const POR_PAGINA = 20;
 
   const insumosBase = useMemo(
@@ -467,15 +472,55 @@ export function AlmacenView() {
   const valorTotal  = insumosBase.reduce((a, p) => a + p.stock_cocina * p.precio, 0);
   const bajosAlerta = insumosBase.filter(p => p.stock_cocina < p.stock_minimo_cocina);
 
+  // Exporta siempre el inventario completo de insumos (no solo la página
+  // o el filtro visible), igual que el criterio usado en Reportes.
+  const handleExportarExcel = () => {
+    setExportandoExcel(true);
+    try {
+      exportarAlmacenExcel(insumosBase);
+    } catch (e) {
+      console.error('Error exportando Excel:', e);
+      alert('Ocurrió un error al generar el Excel. Revisa la consola.');
+    } finally {
+      setExportandoExcel(false);
+    }
+  };
+
+  const handleExportarPdf = () => {
+    setExportando(true);
+    try {
+      exportarAlmacenPdf({ insumos: insumosBase, logoBase64: LOGO_MADRE_BASE64 });
+    } catch (e) {
+      console.error('Error exportando PDF:', e);
+      alert('Ocurrió un error al generar el PDF. Revisa la consola.');
+    } finally {
+      setExportando(false);
+    }
+  };
+
   return (
     <div>
       <PageHeader
         title="Almacén"
         subtitle="Insumos y materia prima"
         action={
-          <Btn onClick={() => setModalProd({ open: true, producto: null })}>
-            <Plus className="w-4 h-4" />Nuevo Insumo
-          </Btn>
+          <div className="flex items-center gap-2">
+            <Btn color={B.green} textColor={B.cream} onClick={handleExportarExcel} disabled={exportandoExcel}>
+              {exportandoExcel
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <FileSpreadsheet className="w-4 h-4" />}
+              {exportandoExcel ? 'Generando...' : 'Excel'}
+            </Btn>
+            <Btn color={B.terra} textColor={B.cream} onClick={handleExportarPdf} disabled={exportando}>
+              {exportando
+                ? <Loader2 className="w-4 h-4 animate-spin" />
+                : <Download className="w-4 h-4" />}
+              {exportando ? 'Generando...' : 'PDF'}
+            </Btn>
+            <Btn onClick={() => setModalProd({ open: true, producto: null })}>
+              <Plus className="w-4 h-4" />Nuevo Insumo
+            </Btn>
+          </div>
         }
       />
 

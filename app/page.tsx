@@ -1,9 +1,11 @@
 //app/page.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 import AppShell from '@/components/shared/AppShell';
+import { AlertaStockModal } from '@/components/shared/AlertaStockModal';
+import { useGlobalData } from '@/context/GlobalDataContext';
 import DashboardView from '@/components/dashboard/DashboardView';
 import MesasView from '@/components/mesas/MesasView';
 import CocinaView from '@/components/cocina/CocinaView';
@@ -64,9 +66,24 @@ function renderView(active: string): React.ReactNode {
 // ─── Root page ────────────────────────────────────────────────────────────────
 export default function Page() {
   const { usuario } = useAuth();
+  const { productos, isLoading } = useGlobalData();
   const [active, setActive] = useState(
     () => usuario?.rol === 'cajero' ? 'ventas' : 'dashboard'
   );
+
+  // ── Alerta de inventario al iniciar sesión ────────────────────────────────
+  // Se muestra una sola vez por carga de la app (equivalente a "al iniciar
+  // sesión", ya que Page() se monta de nuevo tras el login/redirect a "/").
+  // alertaMostradaRef evita que reaparezca al cambiar de vista con el menú.
+  const [mostrarAlertaStock, setMostrarAlertaStock] = useState(false);
+  const alertaMostradaRef = useRef(false);
+
+  useEffect(() => {
+    if (usuario && !isLoading && productos.length > 0 && !alertaMostradaRef.current) {
+      alertaMostradaRef.current = true;
+      setMostrarAlertaStock(true);
+    }
+  }, [usuario, isLoading, productos]);
 
   const handleViewChange = (view: string) => {
     if (usuario?.rol === 'cajero' && VETADO_CAJERO.includes(view)) return;
@@ -83,6 +100,12 @@ export default function Page() {
       >
         {renderView(active)}
       </AppShell>
+
+      <AlertaStockModal
+        productos={productos}
+        open={mostrarAlertaStock}
+        onClose={() => setMostrarAlertaStock(false)}
+      />
     </AuthGuard>
   );
 }
