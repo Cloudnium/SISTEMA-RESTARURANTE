@@ -2,11 +2,12 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
-import { Download, Loader2 } from 'lucide-react';
+import { Download, FileSpreadsheet, Loader2 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { PageHeader, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { exportarReportePdf } from '@/utils/reportes/exportarReportePdf';
+import { exportarReporteExcel } from '@/utils/reportes/exportarReporteExcel';
 import {
   getReporteResumenPeriodo,
   getReporteVentasPorMetodoPago,
@@ -151,6 +152,7 @@ export default function ReportesView() {
   const { datos, actualizando } = useReporteDatos(desde, hasta, !globalLoading);
 
   const [exportando, setExportando] = useState(false);
+  const [exportandoExcel, setExportandoExcel] = useState(false);
 
   // datos === null → nunca ha cargado → spinner pantalla completa
   if (globalLoading || datos === null) {
@@ -192,6 +194,36 @@ export default function ReportesView() {
     }
   };
 
+  const handleExportarExcel = async () => {
+    if (!datos) return;
+    setExportandoExcel(true);
+    try {
+      const [detalleCompleto, agotados, stockBajo] = await Promise.all([
+        getReporteDetalleVentasCompleto(desde, hasta, 100),
+        getReporteProductosAgotados(),
+        getReporteProductosStockBajo(),
+      ]);
+
+      exportarReporteExcel({
+        desde, hasta,
+        resumen:       datos.resumen,
+        metodosPago:   datos.metodosPago,
+        comprobantes:  datos.comprobantes,
+        topProductos:  datos.topProductos,
+        topCategorias: datos.topCategorias,
+        topUsuarios:   datos.topUsuarios,
+        detalleVentas: detalleCompleto,
+        agotados,
+        stockBajo,
+      });
+    } catch (e) {
+      console.error('Error exportando Excel:', e);
+      alert('Ocurrió un error al generar el Excel. Revisa la consola.');
+    } finally {
+      setExportandoExcel(false);
+    }
+  };
+
   return (
     <div className="relative">
 
@@ -222,12 +254,20 @@ export default function ReportesView() {
           title="Reportes y Análisis"
           subtitle="Sistema completo de reportes de ventas e inventario"
           action={
-            <Btn color={B.terra} textColor={B.cream} onClick={handleExportarPdf} disabled={exportando}>
-              {exportando
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Download className="w-4 h-4" />}
-              {exportando ? 'Generando...' : 'PDF'}
-            </Btn>
+            <div className="flex items-center gap-2">
+              <Btn color={B.green} textColor={B.cream} onClick={handleExportarExcel} disabled={exportandoExcel}>
+                {exportandoExcel
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <FileSpreadsheet className="w-4 h-4" />}
+                {exportandoExcel ? 'Generando...' : 'Excel'}
+              </Btn>
+              <Btn color={B.terra} textColor={B.cream} onClick={handleExportarPdf} disabled={exportando}>
+                {exportando
+                  ? <Loader2 className="w-4 h-4 animate-spin" />
+                  : <Download className="w-4 h-4" />}
+                {exportando ? 'Generando...' : 'PDF'}
+              </Btn>
+            </div>
           }
         />
 

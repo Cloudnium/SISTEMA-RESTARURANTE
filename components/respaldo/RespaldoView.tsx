@@ -167,9 +167,13 @@ export function RespaldoView() {
         const LOTE = 100;
         for (let i = 0; i < filas.length; i += LOTE) {
           const lote = filas.slice(i, i + LOTE);
-          const { error } = await supabase
-            .from(tabla)
-            .upsert(lote as Parameters<typeof supabase.from>[0][], { onConflict: 'id' });
+          // Cast acotado: `tabla` es un string dinámico validado contra
+          // TABLAS_BACKUP arriba, pero el cliente de Supabase tipado no
+          // puede inferir la forma de fila para una tabla genérica en
+          // tiempo de compilación (mismo workaround ya usado en CajasView).
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          const { error } = await (supabase.from(tabla) as any)
+            .upsert(lote, { onConflict: 'id' });
           if (error) {
             console.warn(`Error restaurando ${tabla}:`, error.message);
           }

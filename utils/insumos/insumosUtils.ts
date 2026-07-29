@@ -25,15 +25,29 @@ export type PeriodoFiltro = 'hoy' | 'semana' | 'mes';
 export type TipoFiltro    = 'todos' | 'consumo' | 'ingreso';
 
 // ─── Fecha/hora en zona horaria de Lima ─────────────────────────────────────────
-// Los timestamps vienen en UTC desde Supabase. Forzamos timeZone: 'America/Lima'
-// explícitamente para que la hora mostrada sea siempre la de Perú, sin importar
-// en qué zona horaria esté corriendo el navegador o el servidor.
+// BUG CONOCIDO EN LA BD (no corregido ahí a propósito, por pedido del usuario):
+// la columna created_at de movimientos_almacen tiene DEFAULT
+// (now() AT TIME ZONE 'America/Lima') sobre una columna timestamptz. Postgres
+// reinterpreta ese valor "naive" (hora Lima sin tag de zona) usando la zona de
+// la SESIÓN (UTC, confirmado con `SHOW timezone`), guardando el instante real
+// MENOS 5 horas. O sea: todo lo que llega en created_at está atrasado 5h.
+//
+// Mientras eso no se corrija en la BD (cambiar el DEFAULT a `now()`), lo
+// compensamos aquí sumando esas 5 horas antes de formatear. Ojo: si algún día
+// se arregla el DEFAULT en la base de datos, esta compensación hay que
+// quitarla o los registros nuevos saldrán 5h ADELANTADOS.
+const BUG_OFFSET_MS = 5 * 60 * 60 * 1000;
+
+function corregirFecha(iso: string): Date {
+  return new Date(new Date(iso).getTime() + BUG_OFFSET_MS);
+}
+
 export function fmtLimaFecha(iso: string): string {
-  return new Date(iso).toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
+  return corregirFecha(iso).toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
 }
 
 export function fmtLimaHora(iso: string): string {
-  return new Date(iso).toLocaleTimeString('es-PE', {
+  return corregirFecha(iso).toLocaleTimeString('es-PE', {
     timeZone: 'America/Lima', hour: '2-digit', minute: '2-digit',
   });
 }

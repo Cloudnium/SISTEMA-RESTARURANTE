@@ -34,6 +34,13 @@ export default function ModalHistorial({ onClose }: {
       setCargando(true);
       try {
       const fechaInicio = calcFechaInicioLima(periodo);
+      // Mismo bug de 5h del DEFAULT de created_at en la BD (ver insumosUtils.ts).
+      // Lo guardado está atrasado 5h respecto al instante real, así que hay que
+      // restarle 5h también al límite que le mandamos a Postgres, si no el
+      // filtro "Hoy" queda comparando contra el instante real (correcto) vs.
+      // datos guardados 5h antes (incorrectos) y deja fuera lo más reciente.
+      const limiteReal = new Date(`${fechaInicio}T00:00:00-05:00`);
+      const limiteConsulta = new Date(limiteReal.getTime() - 5 * 60 * 60 * 1000).toISOString();
 
       // Consultar movimientos_almacen filtrando por tipo consumo/ajuste en cocina
       const { data, error } = await supabase
@@ -53,7 +60,7 @@ export default function ModalHistorial({ onClose }: {
           usuario:usuarios(nombre)
         `)
         .in('tipo', ['ajuste', 'salida_cocina', 'traslado'])
-        .gte('created_at', `${fechaInicio}T00:00:00-05:00`)
+        .gte('created_at', limiteConsulta)
         .order('created_at', { ascending: false })
         .limit(200);
 
