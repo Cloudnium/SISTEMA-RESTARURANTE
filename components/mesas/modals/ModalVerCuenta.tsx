@@ -9,6 +9,7 @@ import { supabase } from '@/lib/supabase/client';
 import { getPedidoActivoMesa } from '@/lib/supabase/queries';
 import type { Pedido, PedidoItem } from '@/lib/supabase/types';
 import { fmtSoles, type MesaRow } from '@/utils/mesas/mesasUtils';
+import { useElapsedMinutes, fmtDuracion, corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 
 interface Props {
   mesa: MesaRow;
@@ -31,12 +32,12 @@ export default function ModalVerCuenta({ mesa, onClose }: Props) {
   }, [mesa.id]);
 
   useEffect(() => { cargar(); }, [cargar]);
-  
+
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
   }, []);
-  
+
   useEffect(() => {
     const channel = supabase
       .channel(`cuenta-mesa-${mesa.id}`)
@@ -51,6 +52,11 @@ export default function ModalVerCuenta({ mesa, onClose }: Props) {
 
   const items: PedidoItem[] = pedido?.items ?? [];
   const total = items.reduce((s, i) => s + i.subtotal, 0);
+
+  // Hora de inicio (ya corregida) y tiempo transcurrido en vivo
+  const horaInicio = corregirFechaBD(pedido?.created_at ?? null);
+  const minutosTranscurridos = useElapsedMinutes(pedido?.created_at ?? null);
+  const duracion = fmtDuracion(minutosTranscurridos);
 
   return (
     <div
@@ -122,14 +128,15 @@ export default function ModalVerCuenta({ mesa, onClose }: Props) {
                 <div>
                   <p className="text-xs" style={{ color: B.muted }}>Pedido iniciado</p>
                   <p className="text-sm font-semibold" style={{ color: B.charcoal }}>
-                    {new Date(pedido.created_at).toLocaleTimeString('es-PE', {
+                    {horaInicio?.toLocaleTimeString('es-PE', {
+                      timeZone: 'America/Lima',
                       hour: '2-digit', minute: '2-digit',
                     })}
                   </p>
                 </div>
-                {mesa.minutos_ocupada != null && (
+                {duracion && (
                   <div className="flex items-center gap-1.5 text-sm" style={{ color: B.muted }}>
-                    <Clock className="w-4 h-4" />{mesa.minutos_ocupada} min
+                    <Clock className="w-4 h-4" />{duracion}
                   </div>
                 )}
               </div>

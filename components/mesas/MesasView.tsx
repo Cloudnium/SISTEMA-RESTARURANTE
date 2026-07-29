@@ -21,9 +21,16 @@ export default function MesasView() {
   const { mesas, cajas, isLoading, refetchMesas } = useGlobalData();
   const { usuario } = useAuth();
 
-  const [selected,   setSelected]   = useState<MesaRow | null>(null);
-  const [cambiando,  setCambiando]  = useState(false);
-  const [modalNueva, setModalNueva] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [cambiando,   setCambiando]  = useState(false);
+  const [modalNueva,  setModalNueva] = useState(false);
+
+  // Se deriva de `mesas` en cada render — nunca queda desactualizada y no
+  // hace falta un efecto que la sincronice manualmente.
+  const selected = useMemo(
+    () => (selectedId ? (mesas.find(m => m.id === selectedId) as MesaRow | undefined) ?? null : null),
+    [mesas, selectedId],
+  );
 
   // ── Validación de caja abierta (igual que en VentasView) ─────────────────
   const cajaAbierta = useMemo(() => {
@@ -64,15 +71,23 @@ export default function MesasView() {
   );
 
   // ── Cambiar estado de mesa ────────────────────────────────────────────────
+  // Regla: si la mesa tiene un pedido activo (pedido_id != null → hay consumo
+  // sin cobrar todavía), no se permite cambiar el estado manualmente. El
+  // estado solo debe pasar a 'limpieza' cuando se concreta la venta
+  // (crearVenta, en queries/index.ts) o a 'ocupada' al abrir el pedido.
   const handleCambiarEstado = async (id: string, nuevoEstado: EstadoMesa) => {
     if (!selected || selected.estado === nuevoEstado || cambiando) return;
+
+    if (selected.pedido_id) {
+      console.warn('No se puede cambiar el estado: la mesa tiene un pedido sin cobrar.');
+      return;
+    }
+
     setCambiando(true);
     try {
       await actualizarEstadoMesa(id, nuevoEstado);
       if (ESTADOS_CIERRAN_MODAL.includes(nuevoEstado)) {
-        setSelected(null);
-      } else {
-        setSelected(prev => prev ? { ...prev, estado: nuevoEstado } : null);
+        setSelectedId(null);
       }
       refetchMesas().catch(console.error);
     } catch (e) {
@@ -141,7 +156,7 @@ export default function MesasView() {
               <MesaCard
                 key={mesa.id}
                 mesa={mesa as MesaRow}
-                onClick={setSelected}
+                onClick={m => setSelectedId(m.id)}
               />
             ))}
           </div>
@@ -158,7 +173,7 @@ export default function MesasView() {
         <MesaModal
           mesa={selected}
           cajaAbierta={cajaAbierta}
-          onClose={() => setSelected(null)}
+          onClose={() => setSelectedId(null)}
           onCambiarEstado={handleCambiarEstado}
           cambiando={cambiando}
         />

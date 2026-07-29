@@ -6,6 +6,7 @@ import { B } from '@/lib/brand';
 import type { EstadoMesa } from '@/lib/supabase/types';
 import { ESTADOS } from '@/constants/mesas/mesasConstants';
 import { fmtSoles, type MesaRow } from '@/utils/mesas/mesasUtils';
+import { useElapsedMinutes, fmtDuracion, corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 import IlustracionMesa from './IlustracionMesa';
 
 interface Props {
@@ -17,12 +18,19 @@ export default function MesaCard({ mesa, onClick }: Props) {
   const estado: EstadoMesa = mesa.estado ?? 'disponible';
   const est = ESTADOS[estado];
   const pedidoTotal = mesa.pedido_total != null ? fmtSoles(mesa.pedido_total) : null;
-  const hora = mesa.pedido_inicio
-    ? new Date(mesa.pedido_inicio).toLocaleTimeString('es-PE', {
+
+  const horaInicio = corregirFechaBD(mesa.pedido_inicio);
+  const hora = horaInicio
+    ? horaInicio.toLocaleTimeString('es-PE', {
+        timeZone: 'America/Lima',
         hour: '2-digit',
         minute: '2-digit',
       })
     : null;
+
+  // Tiempo que lleva ocupada la mesa, calculado en vivo (ya con el offset corregido)
+  const minutosTranscurridos = useElapsedMinutes(mesa.pedido_inicio);
+  const duracion = fmtDuracion(minutosTranscurridos);
 
   return (
     <button
@@ -76,7 +84,9 @@ export default function MesaCard({ mesa, onClick }: Props) {
               {hora && (
                 <div className="flex items-center gap-1">
                   <Clock className="w-3 h-3 shrink-0" style={{ color: B.muted }} />
-                  <span className="text-[10px]" style={{ color: B.muted }}>{hora}</span>
+                  <span className="text-[10px]" style={{ color: B.muted }}>
+                    {hora}{duracion ? ` · ${duracion}` : ''}
+                  </span>
                 </div>
               )}
             </>

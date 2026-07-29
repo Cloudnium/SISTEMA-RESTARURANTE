@@ -3,13 +3,14 @@
 
 import { useEffect, useState } from 'react';
 import {
-  X, CheckCircle, Users, Receipt,
+  X, CheckCircle, Users, Receipt, Lock,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { useAuth } from '@/lib/auth/AuthContext';
 import type { EstadoMesa } from '@/lib/supabase/types';
 import { ESTADOS, type EstadoConfig } from '@/constants/mesas/mesasConstants';
 import { fmtSoles, type MesaRow } from '@/utils/mesas/mesasUtils';
+import { useElapsedMinutes, fmtDuracion, corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 import ModalComanda from './modals/ModalComanda';
 import ModalVerCuenta from './modals/ModalVerCuenta';
 
@@ -34,10 +35,20 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
   const cajaId    = usuario?.caja_id ?? undefined;
   const consumo   = mesa.pedido_total != null ? fmtSoles(mesa.pedido_total) : 'S/ 0.00';
 
+  // Hay un pedido sin cobrar: no se puede tocar el estado a mano hasta
+  // que se concrete la venta (eso lo hace crearVenta automáticamente).
+  const tienePedidoActivo = Boolean(mesa.pedido_id);
+
+  // Hora de inicio (ya corregida) y tiempo transcurrido en vivo
+  const horaInicio = corregirFechaBD(mesa.pedido_inicio);
+  const minutosTranscurridos = useElapsedMinutes(mesa.pedido_inicio);
+  const duracion = fmtDuracion(minutosTranscurridos);
+
   useEffect(() => {
     document.body.style.overflow = 'hidden';
     return () => { document.body.style.overflow = ''; };
   }, []);
+
   return (
     <>
       <div
@@ -115,15 +126,16 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
                       ),
                     }]
                   : []),
-                ...(estado === 'ocupada' && mesa.pedido_inicio
+                ...(estado === 'ocupada' && horaInicio
                   ? [{
                       label: 'Desde',
                       content: (
                         <span className="text-sm font-semibold" style={{ color: B.charcoal }}>
-                          {new Date(mesa.pedido_inicio).toLocaleTimeString('es-PE', {
+                          {horaInicio.toLocaleTimeString('es-PE', {
+                            timeZone: 'America/Lima',
                             hour: '2-digit', minute: '2-digit',
                           })}
-                          {mesa.minutos_ocupada != null && ` · ${mesa.minutos_ocupada} min`}
+                          {duracion && ` · ${duracion}`}
                         </span>
                       ),
                     }]
@@ -151,8 +163,8 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
             </div>
           )}
 
-          {/* Submenú cambiar estado */}
-          {mostrarCambiarEstado && (
+          {/* Submenú cambiar estado — solo si no hay pedido sin cobrar */}
+          {mostrarCambiarEstado && !tienePedidoActivo && (
             <div
               className="mx-6 mb-4 rounded-2xl overflow-hidden"
               style={{ background: B.cream, border: `1px solid ${B.creamDark}` }}
@@ -208,12 +220,20 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
             </button>
 
             <button
-              onClick={() => setMostrarCambiarEstado(v => !v)}
-              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold"
-              style={{ background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}
+              onClick={() => !tienePedidoActivo && setMostrarCambiarEstado(v => !v)}
+              disabled={tienePedidoActivo}
+              title={tienePedidoActivo ? 'Cobra la mesa antes de cambiar su estado' : undefined}
+              className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-semibold disabled:opacity-50"
+              style={{
+                background: B.cream,
+                color: B.charcoal,
+                border: `1px solid ${B.creamDark}`,
+                cursor: tienePedidoActivo ? 'not-allowed' : 'pointer',
+              }}
             >
-              <Users className="w-4 h-4" />Cambiar Estado
-              <span style={{ fontSize: 10 }}>{mostrarCambiarEstado ? '▲' : '▼'}</span>
+              {tienePedidoActivo ? <Lock className="w-4 h-4" /> : <Users className="w-4 h-4" />}
+              Cambiar Estado
+              {!tienePedidoActivo && <span style={{ fontSize: 10 }}>{mostrarCambiarEstado ? '▲' : '▼'}</span>}
             </button>
 
             <button
@@ -227,12 +247,17 @@ export default function MesaModal({ mesa, cajaAbierta, onClose, onCambiarEstado,
             </button>
 
             <button
-              onClick={() => onCambiarEstado(mesa.id, 'disponible')}
-              disabled={cambiando}
+              onClick={() => !tienePedidoActivo && onCambiarEstado(mesa.id, 'disponible')}
+              disabled={cambiando || tienePedidoActivo}
+              title={tienePedidoActivo ? 'Cobra la mesa antes de cancelarla' : undefined}
               className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-sm font-bold disabled:opacity-50"
-              style={{ background: '#EF4444', color: '#fff' }}
-              onMouseEnter={e => e.currentTarget.style.opacity = '0.88'}
-              onMouseLeave={e => e.currentTarget.style.opacity = '1'}
+              style={{
+                background: '#EF4444',
+                color: '#fff',
+                cursor: tienePedidoActivo ? 'not-allowed' : 'pointer',
+              }}
+              onMouseEnter={e => { if (!tienePedidoActivo) e.currentTarget.style.opacity = '0.88'; }}
+              onMouseLeave={e => { e.currentTarget.style.opacity = '1'; }}
             >
               <X className="w-4 h-4" />Cancelar Mesa
             </button>

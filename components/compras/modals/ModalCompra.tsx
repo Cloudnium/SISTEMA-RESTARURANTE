@@ -1,4 +1,4 @@
-// components/compras/components/modals/ModalCompra.tsx
+// components/compras/modals/ModalCompra.tsx
 'use client';
 
 import React, { useState } from 'react';
@@ -200,6 +200,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
               placeholder="F001"
               className={inputCls()}
               style={INP}
+              maxLength={8}
             />
           </div>
           <div>
@@ -216,6 +217,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
               placeholder="12345"
               className={inputCls()}
               style={INP}
+              maxLength={8}
             />
           </div>
         </div>
@@ -236,6 +238,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
               placeholder="Distribuidora S.A.C."
               className={inputCls()}
               style={INP}
+              maxLength={25}
             />
           </div>
           <div>
@@ -252,6 +255,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
               placeholder="20525474071"
               className={inputCls()}
               style={INP}
+              maxLength={12}
             />
           </div>
         </div>
@@ -284,6 +288,7 @@ export function ModalCompra({ onClose, onSaved, compraEditar }: ModalCompraProps
                   placeholder="Descripción del producto"
                   className="col-span-4 px-3 py-2 rounded-xl text-xs outline-none"
                   style={INP}
+                  maxLength={25}
                 />
                 <input
                   type="number"
