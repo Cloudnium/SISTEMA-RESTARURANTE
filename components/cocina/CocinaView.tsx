@@ -2,18 +2,23 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { ChefHat, Clock, CheckCircle2, Loader2, ChevronDown, ChevronUp } from 'lucide-react';
+import {
+  ChefHat, Clock, CheckCircle2, Loader2, ChevronDown, ChevronUp, History,
+} from 'lucide-react';
 import { B } from '@/lib/brand';
-import { Card, PageHeader } from '@/components/ui';
+import { Card, PageHeader, Btn } from '@/components/ui';
 import { supabase } from '@/lib/supabase/client';
+import { useAuth } from '@/lib/auth/AuthContext';
 import {
   getPedidosCocina, actualizarEstadoItemPedido, marcarPedidoListoParaCocina,
+  registrarProduccion, crearNotificacion,
 } from '@/lib/supabase/queries';
 import type { Pedido, PedidoItem, EstadoPedido } from '@/lib/supabase/types';
 import {
   construirTickets, minutosDesde, cfgUrgencia, type TicketCocina,
 } from '@/utils/cocina/cocinaUtils';
 import { corregirFechaBD } from '@/utils/mesas/useElapsedTime';
+import { ModalHistorialCocina } from './ModalHistorialCocina';
 
 const REFRESCO_FALLBACK_MS = 45_000; // poll de respaldo por si el realtime se cae
 const TICK_MS               = 30_000; // recalcula minutos de espera en pantalla
@@ -28,6 +33,20 @@ function fmtHora(iso: string) {
     hour: '2-digit',
     minute: '2-digit',
   });
+}
+
+function nombreMesaDe(pedido?: Pedido | null) {
+  if (!pedido?.mesa) return 'Mesa';
+  return pedido.mesa.nombre ?? `Mesa ${pedido.mesa.numero}`;
+}
+
+// Helper para loguear el error real de Supabase/Postgres en vez de "{}"
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function logErrorNotificacion(contexto: string, e: any) {
+  console.error(
+    `[Cocina] ${contexto}:`,
+    e?.message ?? e?.error_description ?? e?.details ?? e?.code ?? e,
+  );
 }
 
 // ─── Fila de item dentro de un ticket ─────────────────────────────────────────
@@ -161,12 +180,15 @@ function TicketCard({
 
 // ─── Vista principal ───────────────────────────────────────────────────────────
 export default function CocinaView() {
+  const { usuario } = useAuth();
+
   const [pedidos,   setPedidos]   = useState<Pedido[]>([]);
   const [cargando,  setCargando]  = useState(true);
   const [error,     setError]     = useState('');
   const [ahoraMs,   setAhoraMs]   = useState(() => Date.now());
   const [verListos, setVerListos] = useState(true);
   const [itemsProcesando, setItemsProcesando] = useState<Set<string>>(new Set());
+  const [showHistorial, setShowHistorial]     = useState(false);
 
   const cargar = useCallback(async () => {
     try {
@@ -225,6 +247,7 @@ export default function CocinaView() {
 
   const toggleItem = useCallback(async (item: PedidoItem) => {
     const nuevoEstado: EstadoPedido = item.estado === 'listo' ? 'enviado_cocina' : 'listo';
+    const pasaAListo = nuevoEstado === 'listo';
     marcarProcesando(item.id, true);
 
     // Actualización optimista para que se sienta instantáneo en pantalla
@@ -235,15 +258,42 @@ export default function CocinaView() {
 
     try {
       await actualizarEstadoItemPedido(item.id, nuevoEstado);
+
+      // Solo al pasar a "listo": queda en el historial de cocina (sin tocar
+      // stock, tipo 'produccion') y se avisa al cajero por la campana.
+      // Si algo de esto falla, no revertimos el toggle — el item sí quedó
+      // marcado listo en la BD, que es lo importante.
+      if (pasaAListo && usuario) {
+        const pedidoDueno = pedidos.find(p => (p.items ?? []).some(i => i.id === item.id));
+        const nombreMesa  = nombreMesaDe(pedidoDueno);
+
+        registrarProduccion(
+          item.producto_id,
+          'produccion',
+          item.cantidad,
+          item.producto?.unidad_medida ?? 'und',
+          usuario.id,
+          `Listo para servir · ${nombreMesa}`,
+        ).catch(e => logErrorNotificacion('No se pudo registrar en historial de cocina', e));
+
+        crearNotificacion({
+          tipo:    'pedido_listo',
+          titulo:  'Pedido listo',
+          mensaje: `${nombreMesa} · ${item.cantidad}× ${item.producto?.nombre ?? 'producto'} listo para recoger y entregar`,
+        }).catch(e => logErrorNotificacion('No se pudo enviar la notificación', e));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo actualizar el item');
       cargar(); // revertir con el estado real de la base de datos
     } finally {
       marcarProcesando(item.id, false);
     }
-  }, [cargar]);
+  }, [cargar, pedidos, usuario]);
 
   const marcarTodoListo = useCallback(async (pedidoId: string) => {
+    const pedido = pedidos.find(p => p.id === pedidoId);
+    const pendientesDelPedido = (pedido?.items ?? []).filter(i => i.estado === 'enviado_cocina');
+
     setPedidos(prev => prev.map(p => (
       p.id === pedidoId
         ? { ...p, items: (p.items ?? []).map(i => (i.estado === 'enviado_cocina' ? { ...i, estado: 'listo' as EstadoPedido } : i)) }
@@ -251,11 +301,34 @@ export default function CocinaView() {
     )));
     try {
       await marcarPedidoListoParaCocina(pedidoId);
+
+      if (usuario && pedido && pendientesDelPedido.length > 0) {
+        const nombreMesa = nombreMesaDe(pedido);
+
+        Promise.all(
+          pendientesDelPedido.map(i =>
+            registrarProduccion(
+              i.producto_id,
+              'produccion',
+              i.cantidad,
+              i.producto?.unidad_medida ?? 'und',
+              usuario.id,
+              `Listo para servir · ${nombreMesa}`,
+            ),
+          ),
+        ).catch(e => logErrorNotificacion('No se pudo registrar en historial de cocina', e));
+
+        crearNotificacion({
+          tipo:    'pedido_listo',
+          titulo:  'Pedido listo',
+          mensaje: `${nombreMesa} · pedido completo listo para recoger y entregar (${pendientesDelPedido.length} ítem${pendientesDelPedido.length !== 1 ? 's' : ''})`,
+        }).catch(e => logErrorNotificacion('No se pudo enviar la notificación', e));
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo marcar el pedido como listo');
       cargar();
     }
-  }, [cargar]);
+  }, [cargar, pedidos, usuario]);
 
   if (cargando) return (
     <div className="flex items-center justify-center min-h-[60vh]">
@@ -268,6 +341,12 @@ export default function CocinaView() {
       <PageHeader
         title="Cocina"
         subtitle={`Pedidos enviados desde las mesas · ${new Date().toLocaleDateString('es-PE', { timeZone: 'America/Lima' })}`}
+        action={
+          <Btn onClick={() => setShowHistorial(true)}>
+            <History className="w-4 h-4" />
+            Historial
+          </Btn>
+        }
       />
 
       {/* Stats */}
@@ -341,6 +420,10 @@ export default function CocinaView() {
             </div>
           )}
         </div>
+      )}
+
+      {showHistorial && (
+        <ModalHistorialCocina onClose={() => setShowHistorial(false)} />
       )}
     </div>
   );

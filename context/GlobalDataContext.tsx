@@ -20,6 +20,7 @@ import type {
 } from '@/lib/supabase/types';
 import type { Producto as Producto } from '@/lib/supabase/types';
 import { supabase } from '@/lib/supabase/client';
+import { playNotificationSound } from '@/utils/notificaciones/playNotificationSound';
 
 type ComprobanteDetalle = Awaited<ReturnType<typeof getComprobantes>>[number];
 
@@ -226,6 +227,19 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     }
   }, [usuarioActual, authLoading, refetchAll]);
 
+  // ── Poll de respaldo para mesas ─────────────────────────────────────────────
+  // El realtime a veces se queda "dormido" en pestañas/websockets inactivos;
+  // este refresco cada 30s garantiza que la vista de mesas nunca se quede
+  // pegada indefinidamente, sin reemplazar el realtime (que sigue siendo
+  // instantáneo cuando funciona). Se usa refetchMesas directamente (ya es
+  // estable vía useCallback con deps vacías) — sin pasar por un ref, para no
+  // chocar con el ref que ya usa el canal Realtime más abajo.
+  useEffect(() => {
+    if (!usuarioActual) return;
+    const poll = setInterval(() => { refetchMesas(); }, 30_000);
+    return () => clearInterval(poll);
+  }, [usuarioActual, refetchMesas]);
+
   // ── Refs estables para el canal Realtime ──────────────────────────────────
   const refetchProductosRef       = useRef(refetchProductos);
   const refetchMesasRef           = useRef(refetchMesas);
@@ -358,14 +372,32 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         }
       )
 
-      // ── NOTIFICACIONES ───────────────────────────────────────────────────
+      // ── NOTIFICACIONES INSERT ───────────────────────────────────────────
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'notificaciones' },
         (payload) => {
           const uid   = usuarioActualRef.current?.id;
+          const rol   = usuarioActualRef.current?.rol;
           const notif = payload.new as Notificacion;
           if (!notif.usuario_id || notif.usuario_id === uid) {
             setNotificaciones(prev => [notif, ...prev.slice(0, 19)]);
+
+            if (notif.tipo === 'pedido_listo' && (rol === 'cajero' || rol === 'admin')) {
+              playNotificationSound();
+            }
+          }
+        }
+      )
+      // ── NOTIFICACIONES UPDATE (alguien la marcó como leída) ───────────────
+      // Sin esto, cuando un usuario marca "Listo, entendido", los demás
+      // clientes (incluido él mismo en otra pestaña) nunca se enteran y la
+      // campana sigue mostrando la notificación como pendiente.
+      .on('postgres_changes',
+        { event: 'UPDATE', schema: 'public', table: 'notificaciones' },
+        (payload) => {
+          const actualizada = payload.new as Notificacion;
+          if (actualizada.leida) {
+            setNotificaciones(prev => prev.filter(n => n.id !== actualizada.id));
           }
         }
       )

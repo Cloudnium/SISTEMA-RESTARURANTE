@@ -735,6 +735,17 @@ export async function getProduccionHoy(): Promise<ProduccionCocina[]> {
   return (data as ProduccionCocina[]) ?? [];
 }
 
+export async function getProduccionPorFecha(fecha: string): Promise<ProduccionCocina[]> {
+  const { data, error } = await supabase
+    .from('produccion_cocina')
+    .select('*, producto:productos(nombre, categoria), usuario:usuarios(nombre)')
+    .eq('fecha', fecha)
+    .eq('tipo', 'produccion')
+    .order('hora', { ascending: false });
+  if (error) throw error;
+  return (data as ProduccionCocina[]) ?? [];
+}
+
 export async function registrarProduccion(
   productoId: string,
   tipo: 'produccion' | 'porcionado',
@@ -881,6 +892,24 @@ export async function getNotificacionesSinLeer(usuarioId: string): Promise<Notif
 
 export async function marcarNotificacionLeida(id: string) {
   await db.from('notificaciones').update({ leida: true }).eq('id', id);
+}
+
+export async function crearNotificacion(payload: {
+  tipo:        string;
+  titulo:      string;
+  mensaje:     string;
+  usuario_id?: string | null;
+  referencia?: Record<string, unknown> | null;
+}) {
+  const { error } = await db.from('notificaciones').insert({
+    tipo:       payload.tipo,
+    titulo:     payload.titulo,
+    mensaje:    payload.mensaje,
+    usuario_id: payload.usuario_id ?? null,
+    referencia: payload.referencia ?? null,
+    leida:      false,
+  });
+  if (error) throw error;
 }
 
 // ════════════════════════════════════════════════════════════════════════════
