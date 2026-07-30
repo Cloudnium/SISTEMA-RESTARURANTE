@@ -9,6 +9,7 @@ import { useGlobalData } from '@/context/GlobalDataContext';
 import { abrirCaja, marcarNotificacionLeida } from '@/lib/supabase/queries';
 import { supabase } from '@/lib/supabase/client';
 import { useRouter } from 'next/navigation';
+import { corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = supabase as any;
@@ -18,13 +19,21 @@ interface NavbarProps {
   userName?:     string;
 }
 
+// FIX: created_at de notificaciones viene con el mismo bug de la BD que ya
+// se corrige en mesas (utils/mesas/useElapsedTime.ts) — el valor guardado
+// está 5h detrás de la hora real. Antes esta función comparaba Date.now()
+// directo contra ese valor sin corregir, por eso una notificación recién
+// creada aparecía como "hace 5 h". Se reutiliza corregirFechaBD() para
+// mantener un único lugar con el offset, en vez de duplicar el número.
 function tiempoRelativo(iso: string) {
-  const minutos = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+  const fecha = corregirFechaBD(iso);
+  if (!fecha) return '';
+  const minutos = Math.max(0, Math.floor((Date.now() - fecha.getTime()) / 60000));
   if (minutos < 1)  return 'ahora';
   if (minutos < 60) return `hace ${minutos} min`;
   const horas = Math.floor(minutos / 60);
   if (horas < 24) return `hace ${horas} h`;
-  return new Date(iso).toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
+  return fecha.toLocaleDateString('es-PE', { timeZone: 'America/Lima' });
 }
 
 export default function Navbar({ onOpenSidebar, userName }: NavbarProps) {

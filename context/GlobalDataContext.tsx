@@ -10,12 +10,12 @@ import {
   getProductos, getMesasConPedido, getClientes, getCajas,
   getVentasHoy, getVentasRecientes, getVentasSemana, getVentasMes,
   getComprobantes, getCompras, getUsuarios,
-  getProduccionHoy, getNotificacionesSinLeer,
+  getProduccionHoy, getNotificacionesSinLeer, getPedidosCocina,
   getMetricasDashboard, getTopProductosHoy,
   type MetricasDashboard, type TopProductoHoy,
 } from '@/lib/supabase/queries';
 import type {
-  Mesa, Cliente, Caja, Venta,
+  Mesa, Cliente, Caja, Venta, Pedido,
   Compra, ProduccionCocina, Usuario, Notificacion,
 } from '@/lib/supabase/types';
 import type { Producto as Producto } from '@/lib/supabase/types';
@@ -36,6 +36,7 @@ interface GlobalDataContextType {
   comprobantes:        ComprobanteDetalle[];
   compras:             Compra[];
   produccionHoy:       ProduccionCocina[];
+  pedidosCocina:       Pedido[];
   usuarios:            Usuario[];
   notificaciones:      Notificacion[];
   metricas:            MetricasDashboard | null;
@@ -52,6 +53,7 @@ interface GlobalDataContextType {
   refetchComprobantes:     () => Promise<void>;
   refetchCompras:          () => Promise<void>;
   refetchProduccion:       () => Promise<void>;
+  refetchPedidosCocina:    () => Promise<void>;
   refetchUsuarios:         () => Promise<void>;
   refetchNotificaciones:   () => Promise<void>;
   refetchMetricas:         () => Promise<void>;
@@ -80,6 +82,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const [comprobantes,     setComprobantes]     = useState<ComprobanteDetalle[]>([]);
   const [compras,          setCompras]          = useState<Compra[]>([]);
   const [produccionHoy,    setProduccionHoy]    = useState<ProduccionCocina[]>([]);
+  const [pedidosCocina,    setPedidosCocina]    = useState<Pedido[]>([]);
   const [usuarios,         setUsuarios]         = useState<Usuario[]>([]);
   const [notificaciones,   setNotificaciones]   = useState<Notificacion[]>([]);
   const [metricas,         setMetricas]         = useState<MetricasDashboard | null>(null);
@@ -99,9 +102,22 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     catch (e) { console.error('productos:', e); }
   }, []);
 
+  // FIX DELAY MESAS: `mesas` UPDATE, `pedidos` * y `pedido_items` * disparan
+  // refetchMesas() cada uno por su lado. Cuando dos de esos eventos llegan
+  // casi juntos (ej. abrir mesa = INSERT en pedidos + UPDATE en mesas),
+  // salían DOS requests a getMesasConPedido() en paralelo. Si el primero en
+  // salir tardaba más en responder que el segundo (la red no garantiza el
+  // orden de respuesta), su resultado — más viejo — llegaba último y
+  // pisaba el estado ya actualizado, dejando la mesa "atrasada" en pantalla
+  // hasta el próximo evento o el poll de 30s. Con este contador, cada
+  // llamada se marca con un id; si al resolver ya no es la más reciente en
+  // vuelo, se descarta en vez de aplicarse.
+  const mesasFetchIdRef = useRef(0);
   const refetchMesas = useCallback(async () => {
+    const fetchId = ++mesasFetchIdRef.current;
     try {
       const data = await getMesasConPedido();
+      if (fetchId !== mesasFetchIdRef.current) return; // llegó una más nueva antes: descartar
       const seen = new Set<string>();
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const unicas = (data as any[]).filter((m: { id: string }) => {
@@ -137,6 +153,25 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const refetchProduccion = useCallback(async () => {
     try { setProduccionHoy(await getProduccionHoy()); }
     catch (e) { console.error('produccion:', e); }
+  }, []);
+
+  // Tickets activos del KDS de cocina (pedidos con items enviado_cocina/listo).
+  // Antes vivía como estado local de CocinaView y se recargaba desde cero
+  // (con spinner) cada vez que se montaba el componente al navegar. Al vivir
+  // aquí, en el contexto global, los datos sobreviven al cambio de vista —
+  // igual que mesas, cajas, etc. — y CocinaView no vuelve a mostrar el
+  // loader al volver a entrar a la sección.
+  // Mismo problema y mismo fix que refetchMesas: `pedidos` y `pedido_items`
+  // disparan este refetch al mismo tiempo cuando cocina marca un item listo.
+  const pedidosCocinaFetchIdRef = useRef(0);
+  const refetchPedidosCocina = useCallback(async () => {
+    const fetchId = ++pedidosCocinaFetchIdRef.current;
+    try {
+      const data = await getPedidosCocina();
+      if (fetchId !== pedidosCocinaFetchIdRef.current) return;
+      setPedidosCocina(data);
+    }
+    catch (e) { console.error('pedidosCocina:', e); }
   }, []);
 
   const refetchUsuarios = useCallback(async () => {
@@ -187,6 +222,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     await Promise.allSettled([
       refetchMesas(),
       refetchVentas(),
+      refetchPedidosCocina(),
     ]);
     setIsLoading(false);
 
@@ -207,7 +243,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       ]).then(() => setIsLoadingComplete(true));
     });
   }, [
-    refetchMesas, refetchVentas,
+    refetchMesas, refetchVentas, refetchPedidosCocina,
     refetchProductos, refetchVentasRecientes, refetchVentasMes, refetchClientes,
     refetchCajas, refetchMetricas, refetchTopProductos,
     refetchComprobantes, refetchCompras, refetchProduccion, refetchUsuarios,
@@ -240,6 +276,13 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     return () => clearInterval(poll);
   }, [usuarioActual, refetchMesas]);
 
+  // ── Poll de respaldo para cocina (mismo motivo que el de mesas) ───────────
+  useEffect(() => {
+    if (!usuarioActual) return;
+    const poll = setInterval(() => { refetchPedidosCocina(); }, 30_000);
+    return () => clearInterval(poll);
+  }, [usuarioActual, refetchPedidosCocina]);
+
   // ── Refs estables para el canal Realtime ──────────────────────────────────
   const refetchProductosRef       = useRef(refetchProductos);
   const refetchMesasRef           = useRef(refetchMesas);
@@ -253,6 +296,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const refetchVentasRecientesRef = useRef(refetchVentasRecientes);
   const refetchVentasMesRef       = useRef(refetchVentasMes);
   const refetchMetricasRef        = useRef(refetchMetricas);
+  const refetchPedidosCocinaRef   = useRef(refetchPedidosCocina);
 
   useEffect(() => { refetchProductosRef.current       = refetchProductos;       }, [refetchProductos]);
   useEffect(() => { refetchMesasRef.current           = refetchMesas;           }, [refetchMesas]);
@@ -266,6 +310,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => { refetchVentasRecientesRef.current = refetchVentasRecientes; }, [refetchVentasRecientes]);
   useEffect(() => { refetchVentasMesRef.current       = refetchVentasMes;       }, [refetchVentasMes]);
   useEffect(() => { refetchMetricasRef.current        = refetchMetricas;        }, [refetchMetricas]);
+  useEffect(() => { refetchPedidosCocinaRef.current   = refetchPedidosCocina;   }, [refetchPedidosCocina]);
 
   // ── Canal Realtime único ──────────────────────────────────────────────────
   useEffect(() => {
@@ -296,10 +341,21 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         (payload) => { setMesas(prev => prev.filter(m => m.id !== payload.old.id)); }
       )
 
-      // ── PEDIDOS → refetch mesas ──────────────────────────────────────────
+      // ── PEDIDOS → refetch mesas + tickets de cocina ──────────────────────
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'pedidos' },
-        () => refetchMesasRef.current()
+        () => {
+          refetchMesasRef.current();
+          refetchPedidosCocinaRef.current();
+        }
+      )
+
+      // ── PEDIDO_ITEMS → refetch tickets de cocina ─────────────────────────
+      // Antes lo escuchaba un canal aparte ('kds-cocina') dentro de
+      // CocinaView.tsx; se centraliza aquí junto con el resto del realtime.
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'pedido_items' },
+        () => refetchPedidosCocinaRef.current()
       )
 
       // ── VENTAS INSERT ────────────────────────────────────────────────────
@@ -481,23 +537,23 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   const value = useMemo<GlobalDataContextType>(() => ({
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana, ventasMes,
-    comprobantes, compras, produccionHoy, usuarios, notificaciones,
+    comprobantes, compras, produccionHoy, pedidosCocina, usuarios, notificaciones,
     metricas, topProductosHoy,
     isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
     refetchVentas, refetchVentasRecientes, refetchVentasMes, refetchComprobantes,
-    refetchCompras, refetchProduccion, refetchUsuarios,
+    refetchCompras, refetchProduccion, refetchPedidosCocina, refetchUsuarios,
     refetchNotificaciones, refetchMetricas, refetchTopProductos,
     refetchAll,
   }), [
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana, ventasMes,
-    comprobantes, compras, produccionHoy, usuarios, notificaciones,
+    comprobantes, compras, produccionHoy, pedidosCocina, usuarios, notificaciones,
     metricas, topProductosHoy,
     isLoading, isLoadingComplete,
     refetchProductos, refetchMesas, refetchClientes, refetchCajas,
     refetchVentas, refetchVentasRecientes, refetchVentasMes, refetchComprobantes,
-    refetchCompras, refetchProduccion, refetchUsuarios,
+    refetchCompras, refetchProduccion, refetchPedidosCocina, refetchUsuarios,
     refetchNotificaciones, refetchMetricas, refetchTopProductos,
     refetchAll,
   ]);

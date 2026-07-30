@@ -28,6 +28,17 @@ import VentaMesaView from '@/components/ventamesa/VentaMesaView';
 const SOLO_ADMIN = ['dashboard', 'reportes', 'usuarios', 'respaldo'];
 const VETADO_CAJERO = [...SOLO_ADMIN, 'cocina']; // Cocina es de cocinero + admin, no de cajero
 
+// Vista con la que debe arrancar cada rol al iniciar sesión o recargar.
+const VISTA_INICIAL_POR_ROL: Record<string, string> = {
+  cajero:   'ventas',
+  cocinero: 'cocina',
+  admin:    'dashboard',
+};
+
+function vistaInicialPara(rol?: string): string {
+  return (rol && VISTA_INICIAL_POR_ROL[rol]) || 'dashboard';
+}
+
 // ─── Resolve label for placeholder pages ──────────────────────────────────────
 function getLabelById(id: string): string {
   for (const section of MENU_SECTIONS) {
@@ -67,9 +78,28 @@ function renderView(active: string): React.ReactNode {
 export default function Page() {
   const { usuario } = useAuth();
   const { productos, isLoading } = useGlobalData();
-  const [active, setActive] = useState(
-    () => usuario?.rol === 'cajero' ? 'ventas' : 'dashboard'
-  );
+  const [active, setActive] = useState('dashboard');
+
+  // ── Vista inicial según el rol ────────────────────────────────────────────
+  // FIX: antes esto se resolvía con `useState(() => usuario?.rol === 'cajero'
+  // ? 'ventas' : 'dashboard')`. Ese inicializador "lazy" de useState SOLO
+  // corre en el primerísimo render del componente — y en ese momento
+  // `usuario` todavía es `null`, porque AuthContext resuelve la sesión de
+  // forma asíncrona. Por eso `active` quedaba fijo en 'dashboard' para
+  // SIEMPRE (tanto al iniciar sesión como al recargar la página), sin
+  // importar el rol real — y el rol "cocinero" ni siquiera tenía una rama
+  // propia en el ternario.
+  //
+  // Patrón "ajustar estado durante el render" (igual que en
+  // ModalHistorialCocina.tsx) en vez de un useEffect: corrige la vista en el
+  // mismo render en que `usuario` queda disponible — sin parpadeo de un
+  // frame mostrando 'dashboard' antes de corregirse — y sin el aviso del
+  // compilador de React sobre setState dentro de un efecto.
+  const [usuarioIdVistaAsignada, setUsuarioIdVistaAsignada] = useState<string | null>(null);
+  if (usuario && usuario.id !== usuarioIdVistaAsignada) {
+    setUsuarioIdVistaAsignada(usuario.id);
+    setActive(vistaInicialPara(usuario.rol));
+  }
 
   // ── Alerta de inventario al iniciar sesión ────────────────────────────────
   // Se muestra una sola vez por carga de la app (equivalente a "al iniciar

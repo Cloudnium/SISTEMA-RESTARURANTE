@@ -1,14 +1,14 @@
 // components/cocina/CocinaView.tsx
 'use client';
 
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ChefHat, Loader2, ChevronDown, ChevronUp, History } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { Card, PageHeader, Btn } from '@/components/ui';
-import { supabase } from '@/lib/supabase/client';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { useGlobalData } from '@/context/GlobalDataContext';
 import {
-  getPedidosCocina, actualizarEstadoItemPedido, marcarPedidoListoParaCocina,
+  actualizarEstadoItemPedido, marcarPedidoListoParaCocina,
   registrarProduccion, crearNotificacion,
 } from '@/lib/supabase/queries';
 import type { Pedido, PedidoItem, EstadoPedido } from '@/lib/supabase/types';
@@ -16,59 +16,43 @@ import { construirTickets, nombreMesaDe, logErrorNotificacion } from '@/utils/co
 import TicketCard from '@/components/cocina/TicketCard';
 import { ModalHistorialCocina } from '@/components/cocina/modals/ModalHistorialCocina';
 
-const REFRESCO_FALLBACK_MS = 45_000; // poll de respaldo por si el realtime se cae
-const TICK_MS               = 30_000; // recalcula minutos de espera en pantalla
+const TICK_MS = 30_000; // recalcula minutos de espera en pantalla
 
 // ─── Vista principal ───────────────────────────────────────────────────────────
 export default function CocinaView() {
   const { usuario } = useAuth();
+  const { pedidosCocina, isLoading, refetchPedidosCocina } = useGlobalData();
 
-  const [pedidos,   setPedidos]   = useState<Pedido[]>([]);
-  const [cargando,  setCargando]  = useState(true);
+  // Estado local = espejo de pedidosCocina (que ahora vive en el contexto
+  // global, igual que mesas/cajas/productos) + overlay optimista para que
+  // los toggles se sientan instantáneos. Al vivir los datos "de verdad" en
+  // el contexto, sobreviven a que este componente se desmonte al cambiar de
+  // sección — por eso ya no aparece el spinner de carga cada vez que se
+  // vuelve a entrar a Cocina.
+  const [pedidos, setPedidos] = useState<Pedido[]>(pedidosCocina);
+
+  // Sincroniza con el contexto global cuando llegan datos nuevos (carga
+  // inicial, realtime o el poll de respaldo). Patrón "ajustar estado durante
+  // el render" (igual que en ModalHistorialCocina.tsx) en vez de un
+  // useEffect, para evitar el aviso del compilador de React sobre setState
+  // directo dentro de un efecto.
+  const [pedidosContextAnterior, setPedidosContextAnterior] = useState(pedidosCocina);
+  if (pedidosCocina !== pedidosContextAnterior) {
+    setPedidosContextAnterior(pedidosCocina);
+    setPedidos(pedidosCocina);
+  }
+
   const [error,     setError]     = useState('');
   const [ahoraMs,   setAhoraMs]   = useState(() => Date.now());
   const [verListos, setVerListos] = useState(true);
   const [itemsProcesando, setItemsProcesando] = useState<Set<string>>(new Set());
   const [showHistorial, setShowHistorial]     = useState(false);
 
-  const cargar = useCallback(async () => {
-    try {
-      const data = await getPedidosCocina();
-      setPedidos(data);
-      setError('');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Error al cargar los pedidos de cocina');
-    } finally {
-      setCargando(false);
-    }
-  }, []);
-
-  // Carga inicial + poll de respaldo (por si el realtime se corta)
-  const cargaIniciadaRef = useRef(false);
-  useEffect(() => {
-    if (!cargaIniciadaRef.current) {
-      cargaIniciadaRef.current = true;
-      cargar();
-    }
-    const poll = setInterval(cargar, REFRESCO_FALLBACK_MS);
-    return () => clearInterval(poll);
-  }, [cargar]);
-
   // Reloj para recalcular minutos de espera en pantalla
   useEffect(() => {
     const tick = setInterval(() => setAhoraMs(Date.now()), TICK_MS);
     return () => clearInterval(tick);
   }, []);
-
-  // Realtime: cualquier cambio en pedido_items o pedidos → refrescar el tablero
-  useEffect(() => {
-    const canal = supabase
-      .channel('kds-cocina')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedido_items' }, () => cargar())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'pedidos' }, () => cargar())
-      .subscribe();
-    return () => { supabase.removeChannel(canal); };
-  }, [cargar]);
 
   const tickets          = useMemo(() => construirTickets(pedidos), [pedidos]);
   const enPreparacion    = useMemo(() => tickets.filter(t => t.pendientes.length > 0), [tickets]);
@@ -125,11 +109,11 @@ export default function CocinaView() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo actualizar el item');
-      cargar(); // revertir con el estado real de la base de datos
+      refetchPedidosCocina(); // revertir con el estado real de la base de datos
     } finally {
       marcarProcesando(item.id, false);
     }
-  }, [cargar, pedidos, usuario]);
+  }, [refetchPedidosCocina, pedidos, usuario]);
 
   const marcarTodoListo = useCallback(async (pedidoId: string) => {
     const pedido = pedidos.find(p => p.id === pedidoId);
@@ -167,11 +151,11 @@ export default function CocinaView() {
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'No se pudo marcar el pedido como listo');
-      cargar();
+      refetchPedidosCocina();
     }
-  }, [cargar, pedidos, usuario]);
+  }, [refetchPedidosCocina, pedidos, usuario]);
 
-  if (cargando) return (
+  if (isLoading) return (
     <div className="flex items-center justify-center min-h-[60vh]">
       <Loader2 className="w-10 h-10 animate-spin" style={{ color: B.green }} />
     </div>
