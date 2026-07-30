@@ -272,7 +272,7 @@ export function buildPrintHTML(comp: CompDetalle): string {
   <div class="sep"></div>
   <table>
     <tr><td class="bold" style="width:95px">F. Emisión:</td><td>${fechaSolo}</td><td class="bold" style="width:42px">Hora:</td><td>${horaSolo}</td></tr>
-    <tr><td class="bold">F. Vencimiento:</td><td colspan="3">${fechaSolo}</td></tr>
+    <!-- <tr><td class="bold">F. Vencimiento:</td><td colspan="3">${fechaSolo}</td></tr> -->
     ${clienteRows}
   </table>
   <div class="sep"></div>

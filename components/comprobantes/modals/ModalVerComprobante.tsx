@@ -151,10 +151,10 @@ export function ModalVerComprobante({ comp, onClose, onAnular }: Props) {
                     <td className="py-0.5 font-bold text-black text-right whitespace-nowrap">Hora:</td>
                     <td className="py-0.5 text-gray-800 text-right">{horaSolo}</td>
                   </tr>
-                  <tr>
+                  {/* <tr>
                     <td className="py-0.5 font-bold text-black whitespace-nowrap">F. Vencimiento:</td>
                     <td className="py-0.5 text-gray-800" colSpan={3}>{fechaSolo}</td>
-                  </tr>
+                  </tr> */}
                   <tr>
                     <td className="py-0.5 font-bold text-black whitespace-nowrap">Cliente:</td>
                     <td className="py-0.5 text-gray-800" colSpan={3}>
