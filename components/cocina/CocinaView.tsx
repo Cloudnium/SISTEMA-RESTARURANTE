@@ -2,9 +2,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import {
-  ChefHat, Clock, CheckCircle2, Loader2, ChevronDown, ChevronUp, History,
-} from 'lucide-react';
+import { ChefHat, Loader2, ChevronDown, ChevronUp, History } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { Card, PageHeader, Btn } from '@/components/ui';
 import { supabase } from '@/lib/supabase/client';
@@ -14,169 +12,12 @@ import {
   registrarProduccion, crearNotificacion,
 } from '@/lib/supabase/queries';
 import type { Pedido, PedidoItem, EstadoPedido } from '@/lib/supabase/types';
-import {
-  construirTickets, minutosDesde, cfgUrgencia, type TicketCocina,
-} from '@/utils/cocina/cocinaUtils';
-import { corregirFechaBD } from '@/utils/mesas/useElapsedTime';
-import { ModalHistorialCocina } from './ModalHistorialCocina';
+import { construirTickets, nombreMesaDe, logErrorNotificacion } from '@/utils/cocina/cocinaUtils';
+import TicketCard from '@/components/cocina/TicketCard';
+import { ModalHistorialCocina } from '@/components/cocina/modals/ModalHistorialCocina';
 
 const REFRESCO_FALLBACK_MS = 45_000; // poll de respaldo por si el realtime se cae
 const TICK_MS               = 30_000; // recalcula minutos de espera en pantalla
-
-// FIX: aplica la misma corrección de offset de 5h (utils/mesas/useElapsedTime)
-// que ya usas en Mesas/Venta Mesa, para que la hora mostrada sea la real.
-function fmtHora(iso: string) {
-  const corregida = corregirFechaBD(iso);
-  if (!corregida) return '';
-  return corregida.toLocaleTimeString('es-PE', {
-    timeZone: 'America/Lima',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
-}
-
-function nombreMesaDe(pedido?: Pedido | null) {
-  if (!pedido?.mesa) return 'Mesa';
-  return pedido.mesa.nombre ?? `Mesa ${pedido.mesa.numero}`;
-}
-
-// Helper para loguear el error real de Supabase/Postgres en vez de "{}"
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-function logErrorNotificacion(contexto: string, e: any) {
-  console.error(
-    `[Cocina] ${contexto}:`,
-    e?.message ?? e?.error_description ?? e?.details ?? e?.code ?? e,
-  );
-}
-
-// ─── Fila de item dentro de un ticket ─────────────────────────────────────────
-function ItemRow({
-  item, onToggle, procesando,
-}: {
-  item: PedidoItem;
-  onToggle: (item: PedidoItem) => void;
-  procesando: boolean;
-}) {
-  const listo = item.estado === 'listo';
-  return (
-    <div
-      className="flex items-start gap-3 px-3 py-2.5 rounded-xl transition-colors"
-      style={{ background: listo ? '#e8f5e2' : B.cream }}
-    >
-      <button
-        onClick={() => onToggle(item)}
-        disabled={procesando}
-        className="mt-0.5 w-6 h-6 rounded-lg flex items-center justify-center shrink-0 transition-colors disabled:opacity-50"
-        style={{
-          background: listo ? B.green : B.white,
-          border: `1.5px solid ${listo ? B.green : B.creamDark}`,
-        }}
-        title={listo ? 'Devolver a pendiente' : 'Marcar como listo'}
-      >
-        {listo && <CheckCircle2 className="w-4 h-4" style={{ color: '#fff' }} />}
-      </button>
-
-      <div className="flex-1 min-w-0">
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-sm font-black shrink-0" style={{ color: listo ? B.green : B.charcoal }}>
-            {item.cantidad}×
-          </span>
-          <p
-            className="text-sm font-semibold leading-tight"
-            style={{
-              color: listo ? B.green : B.charcoal,
-              textDecoration: listo ? 'line-through' : 'none',
-              opacity: listo ? 0.75 : 1,
-            }}
-          >
-            {item.producto?.nombre ?? 'Producto'}
-          </p>
-        </div>
-        {item.notas && (
-          <p
-            className="text-xs mt-1 px-2 py-1 rounded-lg inline-block"
-            style={{ background: `${B.terra}15`, color: B.terra }}
-          >
-            📝 {item.notas}
-          </p>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── Tarjeta ticket (una mesa/pedido) ─────────────────────────────────────────
-function TicketCard({
-  ticket, ahoraMs, onToggleItem, onMarcarTodoListo, itemsProcesando,
-}: {
-  ticket:            TicketCocina;
-  ahoraMs:           number;
-  onToggleItem:      (item: PedidoItem) => void;
-  onMarcarTodoListo: (pedidoId: string) => void;
-  itemsProcesando:   Set<string>;
-}) {
-  const { pedido, pendientes, listos } = ticket;
-  const mesa      = pedido.mesa;
-  const minutos   = minutosDesde(ticket.inicio, ahoraMs);
-  const urgencia  = cfgUrgencia(minutos);
-
-  return (
-    <div
-      className="rounded-2xl overflow-hidden flex flex-col"
-      style={{ background: B.white, border: `1.5px solid ${urgencia.color}40` }}
-    >
-      {/* Header ticket */}
-      <div className="px-4 py-3 flex items-center justify-between gap-2" style={{ background: urgencia.bg }}>
-        <div className="min-w-0">
-          <p className="text-sm font-black truncate" style={{ color: B.charcoal }}>
-            {mesa?.nombre ?? `Mesa ${mesa?.numero ?? '—'}`}
-          </p>
-          <p className="text-[11px]" style={{ color: B.muted }}>
-            {mesa?.zona ?? ''} · {fmtHora(pedido.created_at)}
-          </p>
-        </div>
-        <div className="flex items-center gap-1 px-2.5 py-1 rounded-full shrink-0" style={{ background: `${urgencia.color}20` }}>
-          <Clock className="w-3.5 h-3.5" style={{ color: urgencia.color }} />
-          <span className="text-xs font-black" style={{ color: urgencia.color }}>{minutos} min</span>
-        </div>
-      </div>
-
-      {/* Items */}
-      <div className="p-3 space-y-2 flex-1">
-        {pendientes.map(item => (
-          <ItemRow key={item.id} item={item} onToggle={onToggleItem} procesando={itemsProcesando.has(item.id)} />
-        ))}
-        {listos.map(item => (
-          <ItemRow key={item.id} item={item} onToggle={onToggleItem} procesando={itemsProcesando.has(item.id)} />
-        ))}
-      </div>
-
-      {/* Footer */}
-      {pendientes.length > 0 && (
-        <div className="p-3 pt-0">
-          <button
-            onClick={() => onMarcarTodoListo(pedido.id)}
-            className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl text-sm font-bold transition-opacity hover:opacity-90"
-            style={{ background: B.green, color: B.cream }}
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            Marcar pedido listo ({pendientes.length})
-          </button>
-        </div>
-      )}
-      {pendientes.length === 0 && listos.length > 0 && (
-        <div className="px-3 pb-3">
-          <div
-            className="flex items-center justify-center gap-1.5 text-xs font-bold py-1.5 rounded-lg"
-            style={{ color: B.green, background: '#e8f5e2' }}
-          >
-            <CheckCircle2 className="w-3.5 h-3.5" /> Listo, esperando que lo recojan
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
 
 // ─── Vista principal ───────────────────────────────────────────────────────────
 export default function CocinaView() {

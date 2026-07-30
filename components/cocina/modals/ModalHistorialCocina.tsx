@@ -1,4 +1,4 @@
-// components/cocina/ModalHistorialCocina.tsx
+// components/cocina/modals/ModalHistorialCocina.tsx
 'use client';
 
 import React, { useEffect, useMemo, useState } from 'react';

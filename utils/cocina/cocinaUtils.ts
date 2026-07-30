@@ -5,6 +5,34 @@ import {
 } from '@/constants/cocina/cocinaConstants';
 import { corregirFechaBD } from '@/utils/mesas/useElapsedTime';
 
+// ─── Helpers de formato/lectura (antes vivían sueltos en CocinaView.tsx) ──────
+
+// FIX: aplica la misma corrección de offset de 5h (utils/mesas/useElapsedTime)
+// que ya usas en Mesas/Venta Mesa, para que la hora mostrada sea la real.
+export function fmtHora(iso: string): string {
+  const corregida = corregirFechaBD(iso);
+  if (!corregida) return '';
+  return corregida.toLocaleTimeString('es-PE', {
+    timeZone: 'America/Lima',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
+export function nombreMesaDe(pedido?: Pedido | null): string {
+  if (!pedido?.mesa) return 'Mesa';
+  return pedido.mesa.nombre ?? `Mesa ${pedido.mesa.numero}`;
+}
+
+// Helper para loguear el error real de Supabase/Postgres en vez de "{}"
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function logErrorNotificacion(contexto: string, e: any): void {
+  console.error(
+    `[Cocina] ${contexto}:`,
+    e?.message ?? e?.error_description ?? e?.details ?? e?.code ?? e,
+  );
+}
+
 export interface TicketCocina {
   pedido:      Pedido;
   pendientes:  PedidoItem[];
