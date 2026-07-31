@@ -5,6 +5,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff, Loader2, ChevronDown, Check } from 'lucide-react';
 import { useAuth } from '@/lib/auth/AuthContext';
+import { supabase } from '@/lib/supabase/client';
 import { B } from '@/lib/brand';
 import type { RolUsuario } from '@/lib/supabase/types';
 import Image from 'next/image';
@@ -213,9 +214,15 @@ export default function RegisterPage() {
     try {
       // ✅ FIX: usar la API Route del servidor en vez de supabase.auth.admin.createUser
       //    desde el cliente — lo que requería exponer el service_role key en el frontend.
+      // 🔒 Se envía el token de sesión del admin logueado: la API lo verifica
+      //    antes de crear el usuario (ver lib/auth/verificarAdmin.ts).
+      const { data: { session } } = await supabase.auth.getSession();
       const res = await fetch('/api/usuarios', {
         method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type':  'application/json',
+          'Authorization': `Bearer ${session?.access_token ?? ''}`,
+        },
         body: JSON.stringify({
           nombre:   form.nombre.trim(),
           email:    form.email.trim().toLowerCase(),
@@ -354,7 +361,7 @@ export default function RegisterPage() {
             <Input type="email" value={form.email} onChange={set('email')} placeholder="usuario@madre.com" disabled={loading} />
           </Field>
 
-          <Field label="DNI (opcional)">
+          <Field label="DNI">
             <Input
               value={form.dni}
               onChange={v => { if (/^\d{0,8}$/.test(v)) set('dni')(v); }}

@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { verificarAdmin } from '@/lib/auth/verificarAdmin';
 
 function getAdminClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
@@ -22,6 +23,12 @@ export async function DELETE(
   const { id } = await context.params;
 
   if (!id) return NextResponse.json({ error: 'ID requerido' }, { status: 400 });
+
+  // 🔒 Solo un admin autenticado puede eliminar usuarios
+  const verificacion = await verificarAdmin(_req);
+  if (!verificacion.ok) {
+    return NextResponse.json({ error: verificacion.error }, { status: verificacion.status });
+  }
 
   try {
     const supabaseAdmin = getAdminClient();

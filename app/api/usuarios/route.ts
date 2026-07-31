@@ -4,6 +4,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { verificarAdmin } from '@/lib/auth/verificarAdmin';
 
 // Cliente admin con service_role — SOLO usar en server-side (API routes, Server Actions)
 function getAdminClient() {
@@ -18,6 +19,12 @@ function getAdminClient() {
 // ─── POST /api/usuarios — Crear nuevo usuario ─────────────────────────────────
 export async function POST(req: NextRequest) {
   try {
+    // 🔒 Solo un admin autenticado puede crear usuarios
+    const verificacion = await verificarAdmin(req);
+    if (!verificacion.ok) {
+      return NextResponse.json({ error: verificacion.error }, { status: verificacion.status });
+    }
+
     const body = await req.json();
     const { nombre, email, password, rol, dni, caja_id, activo } = body;
 
@@ -83,6 +90,12 @@ export async function POST(req: NextRequest) {
 // ─── PATCH /api/usuarios — Cambiar contraseña de otro usuario ────────────────
 export async function PATCH(req: NextRequest) {
   try {
+    // 🔒 Solo un admin autenticado puede cambiar la contraseña de otro usuario
+    const verificacion = await verificarAdmin(req);
+    if (!verificacion.ok) {
+      return NextResponse.json({ error: verificacion.error }, { status: verificacion.status });
+    }
+
     const body = await req.json();
     const { userId, password } = body;
 

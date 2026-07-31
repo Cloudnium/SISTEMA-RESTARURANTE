@@ -1,4 +1,4 @@
-// components/usuarios/ModalUsuario.tsx
+// components/usuarios/modals/ModalUsuario.tsx
 'use client';
 
 import { useState } from 'react';
@@ -81,9 +81,14 @@ export function ModalUsuario({ usuario, cajas, onClose, onSaved }: ModalUsuarioP
     try {
       if (esNuevo) {
         // Crear via API Route (necesita service_role para crear en Auth)
+        // 🔒 Se envía el token de sesión del admin logueado; la API lo verifica.
+        const { data: { session } } = await supabase.auth.getSession();
         const res  = await fetch('/api/usuarios', {
           method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
+          headers: {
+            'Content-Type':  'application/json',
+            'Authorization': `Bearer ${session?.access_token ?? ''}`,
+          },
           body:    JSON.stringify({
             nombre:   form.nombre,
             email:    form.email,
@@ -113,9 +118,13 @@ export function ModalUsuario({ usuario, cajas, onClose, onSaved }: ModalUsuarioP
 
         // Cambiar contraseña (opcional)
         if (form.password) {
+          const { data: { session } } = await supabase.auth.getSession();
           const res  = await fetch('/api/usuarios', {
             method:  'PATCH',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type':  'application/json',
+              'Authorization': `Bearer ${session?.access_token ?? ''}`,
+            },
             body:    JSON.stringify({ userId: usuario!.id, password: form.password }),
           });
           const json = await res.json();

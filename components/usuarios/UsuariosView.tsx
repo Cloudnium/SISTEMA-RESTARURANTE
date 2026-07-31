@@ -110,7 +110,11 @@ export function UsuariosView() {
     setElimLoading(true);
     setElimError('');
     try {
-      const res  = await fetch(`/api/usuarios/${modalElim.id}`, { method: 'DELETE' });
+      const { data: { session } } = await supabase.auth.getSession();
+      const res  = await fetch(`/api/usuarios/${modalElim.id}`, {
+        method:  'DELETE',
+        headers: { 'Authorization': `Bearer ${session?.access_token ?? ''}` },
+      });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'Error al eliminar');
       setModalElim(null);
