@@ -8,6 +8,57 @@ import { supabase as _supabase } from '../client';
 const db = _supabase as DB;
 const supabase = _supabase;
 
+// ─── Paginación real (evita el límite de 1000 filas por request de Supabase) ──
+// Supabase/PostgREST devuelve como máximo 1000 filas por consulta (configurable
+// en el dashboard, pero 1000 por defecto) SIN avisar con un error — simplemente
+// trunca. Estas dos funciones repiten la consulta con .range() hasta traer
+// TODAS las filas que cumplen el filtro, sin importar cuántas sean.
+
+const TAMANO_PAGINA = 1000;
+
+/** Trae todas las filas de una consulta simple, paginando con .range(). */
+async function fetchTodasLasFilas<T>(
+  crearQuery: (desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<T[]> {
+  const todas: T[] = [];
+  let desde = 0;
+  while (true) {
+    const { data, error } = await crearQuery(desde, desde + TAMANO_PAGINA - 1);
+    if (error) throw error;
+    const filas = data ?? [];
+    todas.push(...filas);
+    if (filas.length < TAMANO_PAGINA) break;
+    desde += TAMANO_PAGINA;
+  }
+  return todas;
+}
+
+/**
+ * Trae todas las filas que hacen match con un filtro .in(columna, ids),
+ * dividiendo `ids` en lotes (evita URLs gigantes con miles de ids) y
+ * paginando cada lote con .range() (evita el límite de 1000 filas).
+ */
+async function fetchPorIds<T>(
+  ids: string[],
+  crearQuery: (loteIds: string[], desde: number, hasta: number) => PromiseLike<{ data: T[] | null; error: unknown }>,
+): Promise<T[]> {
+  const TAMANO_LOTE = 300;
+  const resultado: T[] = [];
+  for (let i = 0; i < ids.length; i += TAMANO_LOTE) {
+    const lote = ids.slice(i, i + TAMANO_LOTE);
+    let desde = 0;
+    while (true) {
+      const { data, error } = await crearQuery(lote, desde, desde + TAMANO_PAGINA - 1);
+      if (error) throw error;
+      const filas = data ?? [];
+      resultado.push(...filas);
+      if (filas.length < TAMANO_PAGINA) break;
+      desde += TAMANO_PAGINA;
+    }
+  }
+  return resultado;
+}
+
 // ─── Tipos de retorno ─────────────────────────────────────────────────────────
 
 export interface ReporteVentasPorMetodoPago {
@@ -113,40 +164,64 @@ export async function getReporteResumenPeriodo(
   desde: string,
   hasta: string,
 ): Promise<ReporteResumenPeriodo> {
-  const [ventasRes, comprasRes, itemsRes, productosRes] = await Promise.all([
-    // Ventas del período
-    db.from('ventas')
+  // 1. Ventas del período — primero, porque las demás consultas dependen de sus IDs
+  const ventas = await fetchTodasLasFilas<{ id: string; total: number; cliente_id: string | null }>(
+    (ini, fin) => db.from('ventas')
       .select('id, total, cliente_id')
       .eq('estado', 'completada')
       .gte('fecha_local', desde)
-      .lte('fecha_local', hasta),
+      .lte('fecha_local', hasta)
+      .range(ini, fin),
+  );
+  const ventaIds = ventas.map(v => v.id);
 
+  const [compras, itemsDelPeriodo, productos, comprobantes] = await Promise.all([
     // Compras del período
-    db.from('compras')
-      .select('total')
-      .gte('fecha_emision', desde)
-      .lte('fecha_emision', hasta),
+    fetchTodasLasFilas<{ total: number }>(
+      (ini, fin) => db.from('compras')
+        .select('total')
+        .gte('fecha_emision', desde)
+        .lte('fecha_emision', hasta)
+        .range(ini, fin),
+    ),
 
-    // Items de ventas para productos vendidos
-    db.from('venta_items')
-      .select('cantidad, venta_id'),
+    // Items de ventas para productos vendidos.
+    // 🔒 FIX: antes traía TODA la tabla venta_items sin filtro de fecha ni
+    // límite — Supabase la truncaba silenciosamente a 1000 filas, así que en
+    // cuanto el histórico superaba eso, este reporte quedaba mal para siempre.
+    // Ahora se filtra solo por las ventas del período y se pagina completo.
+    ventaIds.length > 0
+      ? fetchPorIds<{ cantidad: number; venta_id: string }>(
+          ventaIds,
+          (lote, ini, fin) => db.from('venta_items')
+            .select('cantidad, venta_id')
+            .in('venta_id', lote)
+            .range(ini, fin),
+        )
+      : Promise.resolve([]),
 
     // Productos para inventario
-    db.from('productos')
-      .select('precio, stock, stock_tienda, stock_minimo_tienda, tipo, activo')
-      .eq('activo', true),
+    fetchTodasLasFilas<{
+      precio: number; stock: number; stock_tienda: number;
+      stock_minimo_tienda: number; tipo: string; activo: boolean;
+    }>(
+      (ini, fin) => db.from('productos')
+        .select('precio, stock, stock_tienda, stock_minimo_tienda, tipo, activo')
+        .eq('activo', true)
+        .range(ini, fin),
+    ),
+
+    // Comprobantes del período
+    ventaIds.length > 0
+      ? fetchPorIds<{ id: string; venta_id: string }>(
+          ventaIds,
+          (lote, ini, fin) => db.from('comprobantes')
+            .select('id, venta_id')
+            .in('venta_id', lote)
+            .range(ini, fin),
+        )
+      : Promise.resolve([]),
   ]);
-
-  const ventas    = (ventasRes.data  ?? []) as Array<{ id: string; total: number; cliente_id: string | null }>;
-  const compras   = (comprasRes.data ?? []) as Array<{ total: number }>;
-  const productos = (productosRes.data ?? []) as Array<{
-    precio: number; stock: number; stock_tienda: number;
-    stock_minimo_tienda: number; tipo: string; activo: boolean;
-  }>;
-
-  const ventaIds = new Set(ventas.map(v => v.id));
-  const allItems = (itemsRes.data ?? []) as Array<{ cantidad: number; venta_id: string }>;
-  const itemsDelPeriodo = allItems.filter(i => ventaIds.has(i.venta_id));
 
   const totalVentas        = ventas.reduce((s, v) => s + (v.total ?? 0), 0);
   const totalCompras       = compras.reduce((s, c) => s + (c.total ?? 0), 0);
@@ -155,13 +230,7 @@ export async function getReporteResumenPeriodo(
   const clientesAtendidos  = new Set(ventas.map(v => v.cliente_id).filter(Boolean)).size;
   const ticketPromedio     = ventas.length > 0 ? totalVentas / ventas.length : 0;
   const promedioPorCliente = clientesAtendidos > 0 ? totalVentas / clientesAtendidos : totalVentas;
-
-  // Comprobantes del período
-  const { data: compsData } = await db
-    .from('comprobantes')
-    .select('id, venta_id')
-    .in('venta_id', ventas.map(v => v.id));
-  const totalComprobantes = (compsData ?? []).length;
+  const totalComprobantes  = comprobantes.length;
 
   // Inventario
   const productosVenta    = productos.filter(p => p.tipo === 'producto_venta');
@@ -193,16 +262,17 @@ export async function getReporteVentasPorMetodoPago(
   desde: string,
   hasta: string,
 ): Promise<ReporteVentasPorMetodoPago[]> {
-  const { data, error } = await db
-    .from('ventas')
-    .select('metodo_pago, total')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta);
-  if (error) throw error;
+  const data = await fetchTodasLasFilas<{ metodo_pago: string; total: number }>(
+    (ini, fin) => db.from('ventas')
+      .select('metodo_pago, total')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .range(ini, fin),
+  );
 
   const map = new Map<string, { total: number; cantidad: number }>();
-  for (const v of (data ?? []) as Array<{ metodo_pago: string; total: number }>) {
+  for (const v of data) {
     const prev = map.get(v.metodo_pago) ?? { total: 0, cantidad: 0 };
     map.set(v.metodo_pago, { total: prev.total + v.total, cantidad: prev.cantidad + 1 });
   }
@@ -215,16 +285,17 @@ export async function getReporteVentasPorComprobante(
   desde: string,
   hasta: string,
 ): Promise<ReporteVentasPorComprobante[]> {
-  const { data, error } = await db
-    .from('ventas')
-    .select('tipo_comprobante, total')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta);
-  if (error) throw error;
+  const data = await fetchTodasLasFilas<{ tipo_comprobante: string; total: number }>(
+    (ini, fin) => db.from('ventas')
+      .select('tipo_comprobante, total')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .range(ini, fin),
+  );
 
   const map = new Map<string, { total: number; cantidad: number }>();
-  for (const v of (data ?? []) as Array<{ tipo_comprobante: string; total: number }>) {
+  for (const v of data) {
     const prev = map.get(v.tipo_comprobante) ?? { total: 0, cantidad: 0 };
     map.set(v.tipo_comprobante, { total: prev.total + v.total, cantidad: prev.cantidad + 1 });
   }
@@ -239,28 +310,31 @@ export async function getReporteTopProductos(
   limite = 5,
 ): Promise<ReporteTopProductos[]> {
   // 1. IDs de ventas del período
-  const { data: ventas, error: errV } = await db
-    .from('ventas')
-    .select('id')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta);
-  if (errV) throw errV;
-  const ids = ((ventas ?? []) as Array<{ id: string }>).map(v => v.id);
+  const ventas = await fetchTodasLasFilas<{ id: string }>(
+    (ini, fin) => db.from('ventas')
+      .select('id')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .range(ini, fin),
+  );
+  const ids = ventas.map(v => v.id);
   if (ids.length === 0) return [];
 
   // 2. Items de esas ventas con producto
-  const { data, error } = await db
-    .from('venta_items')
-    .select('cantidad, precio_unitario, producto:productos(id, nombre, categoria)')
-    .in('venta_id', ids);
-  if (error) throw error;
-
-  const map = new Map<string, ReporteTopProductos>();
-  for (const item of (data ?? []) as Array<{
+  const data = await fetchPorIds<{
     cantidad: number; precio_unitario: number;
     producto: { id: string; nombre: string; categoria: string } | null;
-  }>) {
+  }>(
+    ids,
+    (lote, ini, fin) => db.from('venta_items')
+      .select('cantidad, precio_unitario, producto:productos(id, nombre, categoria)')
+      .in('venta_id', lote)
+      .range(ini, fin),
+  );
+
+  const map = new Map<string, ReporteTopProductos>();
+  for (const item of data) {
     if (!item.producto) continue;
     const prev = map.get(item.producto.id) ?? {
       producto_id: item.producto.id,
@@ -284,26 +358,30 @@ export async function getReporteTopCategorias(
   desde: string,
   hasta: string,
 ): Promise<ReporteTopCategorias[]> {
-  const { data: ventas } = await db
-    .from('ventas')
-    .select('id')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta);
-  const ids = ((ventas ?? []) as Array<{ id: string }>).map(v => v.id);
+  const ventas = await fetchTodasLasFilas<{ id: string }>(
+    (ini, fin) => db.from('ventas')
+      .select('id')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .range(ini, fin),
+  );
+  const ids = ventas.map(v => v.id);
   if (ids.length === 0) return [];
 
-  const { data, error } = await db
-    .from('venta_items')
-    .select('cantidad, precio_unitario, producto:productos(categoria)')
-    .in('venta_id', ids);
-  if (error) throw error;
-
-  const map = new Map<string, { total: number; qty: number }>();
-  for (const item of (data ?? []) as Array<{
+  const data = await fetchPorIds<{
     cantidad: number; precio_unitario: number;
     producto: { categoria: string } | null;
-  }>) {
+  }>(
+    ids,
+    (lote, ini, fin) => db.from('venta_items')
+      .select('cantidad, precio_unitario, producto:productos(categoria)')
+      .in('venta_id', lote)
+      .range(ini, fin),
+  );
+
+  const map = new Map<string, { total: number; qty: number }>();
+  for (const item of data) {
     if (!item.producto?.categoria) continue;
     const prev = map.get(item.producto.categoria) ?? { total: 0, qty: 0 };
     map.set(item.producto.categoria, {
@@ -323,19 +401,20 @@ export async function getReporteTopUsuarios(
   desde: string,
   hasta: string,
 ): Promise<ReporteTopUsuarios[]> {
-  const { data, error } = await db
-    .from('ventas')
-    .select('total, usuario:usuarios(id, nombre, rol)')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta);
-  if (error) throw error;
-
-  const map = new Map<string, ReporteTopUsuarios>();
-  for (const v of (data ?? []) as Array<{
+  const data = await fetchTodasLasFilas<{
     total: number;
     usuario: { id: string; nombre: string; rol: string } | null;
-  }>) {
+  }>(
+    (ini, fin) => db.from('ventas')
+      .select('total, usuario:usuarios(id, nombre, rol)')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .range(ini, fin),
+  );
+
+  const map = new Map<string, ReporteTopUsuarios>();
+  for (const v of data) {
     if (!v.usuario) continue;
     const prev = map.get(v.usuario.id) ?? {
       usuario_id: v.usuario.id,
@@ -356,20 +435,21 @@ export async function getReporteTopClientes(
   hasta: string,
   limite = 5,
 ): Promise<ReporteTopClientes[]> {
-  const { data, error } = await db
-    .from('ventas')
-    .select('total, fecha_local, cliente:clientes(id, nombre)')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta)
-    .not('cliente_id', 'is', null);
-  if (error) throw error;
-
-  const map = new Map<string, ReporteTopClientes>();
-  for (const v of (data ?? []) as Array<{
+  const data = await fetchTodasLasFilas<{
     total: number; fecha_local: string;
     cliente: { id: string; nombre: string } | null;
-  }>) {
+  }>(
+    (ini, fin) => db.from('ventas')
+      .select('total, fecha_local, cliente:clientes(id, nombre)')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .not('cliente_id', 'is', null)
+      .range(ini, fin),
+  );
+
+  const map = new Map<string, ReporteTopClientes>();
+  for (const v of data) {
     if (!v.cliente) continue;
     const prev = map.get(v.cliente.id) ?? {
       cliente_id:    v.cliente.id,
@@ -441,18 +521,20 @@ export async function getReporteVentasSemanales(
   desde: string,
   hasta: string,
 ): Promise<ReporteVentasSemanal[]> {
-  const { data, error } = await supabase
-    .from('ventas')
-    .select('total, fecha_local')
-    .eq('estado', 'completada')
-    .gte('fecha_local', desde)
-    .lte('fecha_local', hasta)
-    .order('fecha_local');
-  if (error) throw error;
+  const data = await fetchTodasLasFilas<{ total: number; fecha_local: string }>(
+    (ini, fin) => supabase
+      .from('ventas')
+      .select('total, fecha_local')
+      .eq('estado', 'completada')
+      .gte('fecha_local', desde)
+      .lte('fecha_local', hasta)
+      .order('fecha_local')
+      .range(ini, fin),
+  );
 
   // Agrupar por semana ISO
   const semanas = new Map<string, { inicio: Date; fin: Date; total: number; cantidad: number }>();
-  for (const v of (data ?? []) as Array<{ total: number; fecha_local: string }>) {
+  for (const v of data) {
     const d      = new Date(v.fecha_local + 'T00:00:00');
     const dia    = d.getDay();
     const lunes  = new Date(d);
@@ -543,20 +625,21 @@ export interface ReporteProductoStock {
 }
 
 export async function getReporteProductosAgotados(): Promise<ReporteProductoStock[]> {
-  const { data, error } = await db
-    .from('productos')
-    .select('nombre, categoria, stock_tienda, stock_minimo_tienda, precio')
-    .eq('activo', true)
-    .eq('tipo', 'producto_venta')
-    .eq('stock_tienda', 0)
-    .order('categoria')
-    .order('nombre');
-  if (error) throw error;
-
-  return ((data ?? []) as Array<{
+  const data = await fetchTodasLasFilas<{
     nombre: string; categoria: string; stock_tienda: number;
     stock_minimo_tienda: number; precio: number;
-  }>).map(p => ({
+  }>(
+    (ini, fin) => db.from('productos')
+      .select('nombre, categoria, stock_tienda, stock_minimo_tienda, precio')
+      .eq('activo', true)
+      .eq('tipo', 'producto_venta')
+      .eq('stock_tienda', 0)
+      .order('categoria')
+      .order('nombre')
+      .range(ini, fin),
+  );
+
+  return data.map(p => ({
     nombre:       p.nombre,
     categoria:    p.categoria,
     stock_tienda: p.stock_tienda,
@@ -566,20 +649,21 @@ export async function getReporteProductosAgotados(): Promise<ReporteProductoStoc
 }
 
 export async function getReporteProductosStockBajo(): Promise<ReporteProductoStock[]> {
-  const { data, error } = await db
-    .from('productos')
-    .select('nombre, categoria, stock_tienda, stock_minimo_tienda, precio')
-    .eq('activo', true)
-    .eq('tipo', 'producto_venta')
-    .gt('stock_tienda', 0)
-    .order('categoria')
-    .order('nombre');
-  if (error) throw error;
-
-  return ((data ?? []) as Array<{
+  const data = await fetchTodasLasFilas<{
     nombre: string; categoria: string; stock_tienda: number;
     stock_minimo_tienda: number; precio: number;
-  }>)
+  }>(
+    (ini, fin) => db.from('productos')
+      .select('nombre, categoria, stock_tienda, stock_minimo_tienda, precio')
+      .eq('activo', true)
+      .eq('tipo', 'producto_venta')
+      .gt('stock_tienda', 0)
+      .order('categoria')
+      .order('nombre')
+      .range(ini, fin),
+  );
+
+  return data
     .filter(p => p.stock_tienda < p.stock_minimo_tienda)
     .map(p => ({
       nombre:       p.nombre,
