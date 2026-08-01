@@ -16,7 +16,11 @@ interface SidebarProps {
 }
 
 const OCULTO_CAJERO   = ['dashboard', 'reportes', 'usuarios', 'respaldo', 'cocina'];
-const OCULTO_COCINERO = ['dashboard', 'venta-mesa', 'ventas', 'cajas', 'reportes', 'usuarios', 'respaldo', 'comprobantes'];
+// FIX PERMISOS: faltaban 'mesas', 'clientes' y 'compras' — el cocinero podía
+// verlos y entrar (renderView no tenía guard para esas vistas; ver
+// app/page.tsx). Se agregan aquí para que el menú deje de ofrecerlos, en
+// línea con lo que ya se ocultaba (ventas, cajas, comprobantes, etc.).
+const OCULTO_COCINERO = ['dashboard', 'mesas', 'venta-mesa', 'ventas', 'cajas', 'reportes', 'usuarios', 'respaldo', 'comprobantes', 'clientes', 'compras'];
 
 const ROL_LABEL: Record<string, string> = {
   admin:    'Administrador',

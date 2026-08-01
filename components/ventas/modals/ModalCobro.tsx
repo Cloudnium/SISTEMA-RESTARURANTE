@@ -1,12 +1,13 @@
 // components/ventas/modals/ModalCobro.tsx
 'use client';
 
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { X, Loader2, CheckCircle } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { crearVenta } from '@/lib/supabase/queries';
+import { nuevaIdempotencyKey, sinConexion, MENSAJE_SIN_CONEXION } from '@/lib/idempotencia';
 import { imprimirComprobanteDeVenta } from '@/utils/comprobantes/comprobantesUtils';
 import {
   METODOS_PAGO, COMPROBANTES, COLOR_VENTA,
@@ -52,6 +53,13 @@ export function ModalCobro({
   const [exito,         setExito]           = useState(false);
   const [imprimiendo,   setImprimiendo]     = useState(false);
   const [error,         setError]           = useState('');
+
+  // Una sola key por intento de cobro: se genera al primer click y se
+  // reutiliza si el usuario reintenta tras un error (p.ej. corte de
+  // conexión). Así el servidor puede detectar un reintento duplicado y
+  // devolver la venta ya creada en vez de generar una boleta doble. Se
+  // renueva recién cuando la venta se confirma con éxito.
+  const idempotencyKeyRef = useRef<string>(nuevaIdempotencyKey());
 
   // ── Cliente EFECTIVO a mostrar/usar ────────────────────────────────────────
   // Solo aplica el default automático cuando clienteElegido === undefined
@@ -104,6 +112,10 @@ export function ModalCobro({
       setError('Para factura debes seleccionar un cliente con RUC.');
       return;
     }
+    if (sinConexion()) {
+      setError(MENSAJE_SIN_CONEXION);
+      return;
+    }
     setProcesando(true);
     setError('');
     try {
@@ -119,9 +131,13 @@ export function ModalCobro({
           monto_recibido:   efectivo ? parseFloat(efectivo) : undefined,
           descuento_monto:  descVal > 0 ? descVal : undefined,
           notas:            multaVal > 0 ? `Multa por daños: S/ ${multaVal.toFixed(2)}` : undefined,
+          idempotency_key:  idempotencyKeyRef.current,
         },
         usuario.id,
       );
+      // Venta confirmada: la próxima que se abra este modal (u otro cobro)
+      // debe llevar una key nueva, distinta de esta.
+      idempotencyKeyRef.current = nuevaIdempotencyKey();
       setExito(true);
       void Promise.all([refetchVentas(), refetchVentasRecientes(), refetchProductos()]);
 

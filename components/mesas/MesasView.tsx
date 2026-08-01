@@ -8,6 +8,7 @@ import { PageHeader, Btn } from '@/components/ui';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { actualizarEstadoMesa, cancelarMesa } from '@/lib/supabase/queries';
+import { sinConexion, MENSAJE_SIN_CONEXION } from '@/lib/idempotencia';
 import type { EstadoMesa } from '@/lib/supabase/types';
 
 import { ESTADOS, ESTADOS_CIERRAN_MODAL } from '@/constants/mesas/mesasConstants';
@@ -17,7 +18,7 @@ import MesaModal from '@/components/mesas/MesaModal';
 import ModalNuevaMesa from '@/components/mesas/modals/ModalNuevaMesa';
 
 export default function MesasView() {
-  const { mesas, cajas, isLoading, refetchMesas } = useGlobalData();
+  const { mesas, cajas, isLoading, refetchMesas, actualizarMesaLocal } = useGlobalData();
   const { usuario } = useAuth();
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -72,15 +73,30 @@ export default function MesasView() {
       return;
     }
 
+    if (sinConexion()) {
+      console.warn(MENSAJE_SIN_CONEXION);
+      return;
+    }
+
+    const estadoAnterior = selected.estado;
+
+    // UI optimista: se pinta el nuevo estado al instante, sin esperar la
+    // respuesta del servidor. Si la escritura falla, se revierte abajo.
+    actualizarMesaLocal(id, { estado: nuevoEstado });
+    if (ESTADOS_CIERRAN_MODAL.includes(nuevoEstado)) {
+      setSelectedId(null);
+    }
+
     setCambiando(true);
     try {
       await actualizarEstadoMesa(id, nuevoEstado);
-      if (ESTADOS_CIERRAN_MODAL.includes(nuevoEstado)) {
-        setSelectedId(null);
-      }
+      // Confirma contra el servidor por si algo más cambió mientras tanto
+      // (p.ej. otro usuario); no bloquea la UI, que ya se actualizó arriba.
       refetchMesas().catch(console.error);
     } catch (e) {
       console.error('Error al cambiar estado:', e);
+      // Revertir la UI optimista: el cambio no se guardó.
+      actualizarMesaLocal(id, { estado: estadoAnterior });
       refetchMesas().catch(console.error);
     } finally {
       setCambiando(false);
@@ -93,14 +109,26 @@ export default function MesasView() {
   // todo en una sola transacción vía RPC (fn_cancelar_mesa).
   const handleCancelarMesa = async (id: string) => {
     if (cambiando) return;
+    if (sinConexion()) {
+      console.warn(MENSAJE_SIN_CONEXION);
+      return;
+    }
+
+    const mesaAnterior = mesas.find(m => m.id === id) as MesaRow | undefined;
+
+    // UI optimista: fn_cancelar_mesa libera la mesa, así que se refleja de
+    // inmediato en vez de esperar el round-trip del RPC.
+    actualizarMesaLocal(id, { estado: 'disponible', pedido_id: null } as Partial<MesaRow>);
+    setSelectedId(null);
 
     setCambiando(true);
     try {
       await cancelarMesa(id, usuario?.id ?? '');
-      setSelectedId(null);
       refetchMesas().catch(console.error);
     } catch (e) {
       console.error('Error al cancelar mesa:', e);
+      // Revertir: el RPC falló, la mesa sigue como estaba.
+      if (mesaAnterior) actualizarMesaLocal(id, mesaAnterior);
       refetchMesas().catch(console.error);
     } finally {
       setCambiando(false);

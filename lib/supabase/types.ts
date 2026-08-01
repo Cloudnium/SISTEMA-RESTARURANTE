@@ -446,4 +446,8 @@ export interface CrearVentaPayload {
   monto_recibido?:   number;
   descuento_monto?:  number;
   notas?:            string;
+  /** Generada en el cliente con nuevaIdempotencyKey() (lib/idempotencia.ts).
+   *  Reutilizar la misma key si se reintenta tras un error de red evita
+   *  duplicar la venta/boleta. Opcional para no romper llamadas existentes. */
+  idempotency_key?:  string;
 }

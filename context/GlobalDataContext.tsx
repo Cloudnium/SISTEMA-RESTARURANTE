@@ -59,6 +59,10 @@ interface GlobalDataContextType {
   refetchMetricas:         () => Promise<void>;
   refetchTopProductos:     () => Promise<void>;
   refetchAll:              () => Promise<void>;
+  /** Actualiza una mesa en memoria al instante (sin red). Usar para UI
+   *  optimista al cambiar de estado; el realtime/refetch ya se encarga de
+   *  reconciliar con el valor real cuando la respuesta llegue. */
+  actualizarMesaLocal:     (id: string, cambios: Partial<Mesa>) => void;
 }
 
 const GlobalDataContext = createContext<GlobalDataContextType | null>(null);
@@ -128,6 +132,17 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       setMesas(unicas);
     }
     catch (e) { console.error('mesas:', e); }
+  }, []);
+
+  // FIX DELAY MESAS (2/2): actualización optimista en memoria. Antes, cambiar
+  // el estado de una mesa esperaba el UPDATE en Supabase y LUEGO hacía un
+  // refetch completo de `v_mesas_con_pedido` (un segundo round-trip) antes de
+  // que la UI mostrara el nuevo estado — de ahí el "retraso" al pasar de
+  // ocupada a limpieza, etc. Con esto, quien dispara el cambio (MesasView)
+  // puede pintar el nuevo estado al instante; el UPDATE real y el realtime
+  // siguen corriendo igual y corrigen la UI si algo no coincide.
+  const actualizarMesaLocal = useCallback((id: string, cambios: Partial<Mesa>) => {
+    setMesas(prev => prev.map(m => (m.id === id ? { ...m, ...cambios } : m)));
   }, []);
 
   const refetchClientes = useCallback(async () => {
@@ -265,14 +280,15 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
 
   // ── Poll de respaldo para mesas ─────────────────────────────────────────────
   // El realtime a veces se queda "dormido" en pestañas/websockets inactivos;
-  // este refresco cada 30s garantiza que la vista de mesas nunca se quede
-  // pegada indefinidamente, sin reemplazar el realtime (que sigue siendo
-  // instantáneo cuando funciona). Se usa refetchMesas directamente (ya es
-  // estable vía useCallback con deps vacías) — sin pasar por un ref, para no
-  // chocar con el ref que ya usa el canal Realtime más abajo.
+  // este refresco cada 8s garantiza que la vista de mesas nunca se quede
+  // pegada por mucho tiempo, sin reemplazar el realtime (que sigue siendo
+  // instantáneo cuando funciona, y ahora se reconecta solo si se cae — ver
+  // el canal más abajo). Se usa refetchMesas directamente (ya es estable vía
+  // useCallback con deps vacías) — sin pasar por un ref, para no chocar con
+  // el ref que ya usa el canal Realtime más abajo.
   useEffect(() => {
     if (!usuarioActual) return;
-    const poll = setInterval(() => { refetchMesas(); }, 30_000);
+    const poll = setInterval(() => { refetchMesas(); }, 8_000);
     return () => clearInterval(poll);
   }, [usuarioActual, refetchMesas]);
 
@@ -528,9 +544,40 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
         () => refetchComprobantesRef.current()
       )
 
-      .subscribe();
+      .subscribe((status) => {
+        // FIX DELAY ENTRE PESTAÑAS/USUARIOS: el WebSocket de Realtime puede
+        // "dormirse" o cortarse en silencio (pestaña de fondo, blip de red,
+        // etc.) sin que el navegador lo note — quien generó el cambio lo ve
+        // al toque porque acaba de escribir; el resto de usuarios depende
+        // 100% de este socket, y si murió, antes solo se enteraban con el
+        // poll de respaldo (cada 30s). Ahora, si el canal se cae, se
+        // reintenta la suscripción enseguida en vez de esperar al poll.
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          setTimeout(() => { canal.subscribe(); }, 1000);
+        }
+      });
 
-    return () => { supabase.removeChannel(canal); };
+    // Red de seguridad adicional: si el canal estaba dormido y la pestaña
+    // recupera el foco (o vuelve la conexión), se refresca mesas y cocina al
+    // toque en vez de esperar al poll de 30s. Cubre justo el caso de tener
+    // dos ventanas abiertas (ej. admin y cajero) donde una queda sin foco.
+    const refrescarAlVolver = () => {
+      refetchMesasRef.current();
+      refetchPedidosCocinaRef.current();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') refrescarAlVolver();
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('focus', refrescarAlVolver);
+    window.addEventListener('online', refrescarAlVolver);
+
+    return () => {
+      supabase.removeChannel(canal);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('focus', refrescarAlVolver);
+      window.removeEventListener('online', refrescarAlVolver);
+    };
   }, []);
 
   // ── Valor del contexto ────────────────────────────────────────────────────
@@ -544,7 +591,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     refetchVentas, refetchVentasRecientes, refetchVentasMes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchPedidosCocina, refetchUsuarios,
     refetchNotificaciones, refetchMetricas, refetchTopProductos,
-    refetchAll,
+    refetchAll, actualizarMesaLocal,
   }), [
     productos, mesas, clientes, cajas,
     ventasHoy, ventasRecientes, ventasSemana, ventasMes,
@@ -555,7 +602,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     refetchVentas, refetchVentasRecientes, refetchVentasMes, refetchComprobantes,
     refetchCompras, refetchProduccion, refetchPedidosCocina, refetchUsuarios,
     refetchNotificaciones, refetchMetricas, refetchTopProductos,
-    refetchAll,
+    refetchAll, actualizarMesaLocal,
   ]);
 
   return (

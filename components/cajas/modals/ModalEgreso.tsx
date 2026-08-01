@@ -1,11 +1,12 @@
 // components/cajas/modals/ModalEgreso.tsx
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { Loader2 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { useAuth } from '@/lib/auth/AuthContext';
 import { registrarEgresoCaja } from '@/lib/supabase/queries';
+import { nuevaIdempotencyKey, sinConexion, MENSAJE_SIN_CONEXION } from '@/lib/idempotencia';
 import { fmtSoles } from '@/utils/cajas/cajasUtils';
 import { EGRESO_ERROR_MESSAGES } from '@/constants/cajas/cajasConstants';
 import type { Caja } from '@/lib/supabase/types';
@@ -23,6 +24,11 @@ export function ModalEgreso({ caja, onClose, onSaved }: ModalEgresoProps) {
   const [loading,  setLoading]  = useState(false);
   const [error,    setError]    = useState('');
 
+  // Misma idea que en el cobro de ventas: una key por intento, reutilizada
+  // si se reintenta tras un error, para que un corte de conexión nunca
+  // duplique el egreso ni el descuento de saldo (ver lib/idempotencia.ts).
+  const idempotencyKeyRef = useRef<string>(nuevaIdempotencyKey());
+
   const handleRegistrar = async () => {
     if (!concepto.trim())                 { setError(EGRESO_ERROR_MESSAGES.sinConcepto); return; }
     if (!monto || parseFloat(monto) <= 0) { setError(EGRESO_ERROR_MESSAGES.sinMonto);   return; }
@@ -31,11 +37,19 @@ export function ModalEgreso({ caja, onClose, onSaved }: ModalEgresoProps) {
       return;
     }
     if (!usuario) return;
+    if (sinConexion()) {
+      setError(MENSAJE_SIN_CONEXION);
+      return;
+    }
 
     setLoading(true);
     setError('');
     try {
-      await registrarEgresoCaja(caja.id, concepto, parseFloat(monto), usuario.id);
+      await registrarEgresoCaja(
+        caja.id, concepto, parseFloat(monto), usuario.id, undefined,
+        idempotencyKeyRef.current,
+      );
+      idempotencyKeyRef.current = nuevaIdempotencyKey();
       onSaved();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al registrar egreso');

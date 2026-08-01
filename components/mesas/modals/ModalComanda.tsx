@@ -1,7 +1,7 @@
 // components/mesas/modals/ModalComanda.tsx
 'use client';
 
-import { useState, useEffect, useCallback, useMemo, startTransition } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, startTransition } from 'react';
 import {
   X, Loader2, Receipt, CheckCircle, RefreshCw,
   Users, ShoppingCart, Tag, AlertTriangle, Package,
@@ -13,6 +13,7 @@ import {
   crearVenta,
 } from '@/lib/supabase/queries';
 import { imprimirComprobanteDeVenta } from '@/utils/comprobantes/comprobantesUtils';
+import { nuevaIdempotencyKey, sinConexion, MENSAJE_SIN_CONEXION } from '@/lib/idempotencia';
 import { useGlobalData } from '@/context/GlobalDataContext';
 import type {
   Pedido, PedidoItem, Cliente,
@@ -137,6 +138,10 @@ export default function ModalComanda({ mesa, onClose, onPagado, usuarioId, cajaI
     ? Math.max(0, (parseFloat(efectivo) || 0) - total)
     : null;
 
+  // Una key por intento de cobro — se reutiliza si el usuario reintenta tras
+  // un error, así el servidor no duplica la venta (ver lib/idempotencia.ts).
+  const idempotencyKeyRef = useRef<string>(nuevaIdempotencyKey());
+
   // ── Confirmar pago ────────────────────────────────────────────────────────
   const confirmarPago = async () => {
     if (!cajaAbierta) {
@@ -145,6 +150,10 @@ export default function ModalComanda({ mesa, onClose, onPagado, usuarioId, cajaI
     }
     if (tipoComp === 'factura' && (!cliente || esClienteGeneral(cliente))) {
       setError('Para factura debes seleccionar o registrar un cliente con RUC.');
+      return;
+    }
+    if (sinConexion()) {
+      setError(MENSAJE_SIN_CONEXION);
       return;
     }
     setProcesando(true);
@@ -169,10 +178,13 @@ export default function ModalComanda({ mesa, onClose, onPagado, usuarioId, cajaI
       monto_recibido:   metodoPago === 'efectivo' ? (parseFloat(efectivo) || undefined) : undefined,
       descuento_monto:  descVal > 0 ? descVal : undefined,
       notas:            multaVal > 0 ? `Multa por daños: S/ ${multaVal.toFixed(2)}` : undefined,
+      idempotency_key:  idempotencyKeyRef.current,
     };
 
     try {
       const venta = await crearVenta(payload, usuarioId);
+      // Confirmada: la próxima vez se usa una key nueva.
+      idempotencyKeyRef.current = nuevaIdempotencyKey();
       setExito(true);
 
       // ── Impresión automática del comprobante recién generado ──────────────

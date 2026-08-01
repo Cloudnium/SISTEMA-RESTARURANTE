@@ -392,6 +392,16 @@ export async function getVentasSemana() {
   return data ?? [];
 }
 
+// NOTA: se revirtió temporalmente a la implementación original (sin RPC)
+// porque Supabase está rechazando las llamadas a fn_crear_venta a nivel de
+// API Gateway (antes de llegar a Postgres/PostgREST) con un error de apikey
+// que no corresponde a la realidad — confirmado en los Logs del dashboard,
+// categoría "API Gateway" vs "PostgREST". No es un problema de este código,
+// de tu SQL, ni de tus permisos (todo eso quedó verificado). El RPC
+// fn_crear_venta sigue existiendo en tu base de datos, sin usarse por
+// ahora — no estorba, y se puede retomar cuando ese tema de Supabase se
+// resuelva. Mientras tanto, esto es exactamente lo que tenías antes,
+// funcionando.
 export async function crearVenta(payload: CrearVentaPayload, usuarioId: string): Promise<Venta> {
   // ── Cálculo correcto para Perú ────────────────────────────────────────────
   // Los precios de los productos YA incluyen IGV (precio de venta al público).
@@ -584,12 +594,18 @@ export async function getMovimientosCaja(cajaId: string) {
   return data ?? [];
 }
 
+// NOTA: revertido temporalmente por el mismo motivo que crearVenta (ver
+// nota arriba) — el RPC fn_registrar_egreso_caja está rechazado a nivel de
+// API Gateway de Supabase, no por este código. Se mantiene el parámetro
+// idempotencyKey en la firma (sin usar) para no romper el llamado desde
+// ModalEgreso.tsx.
 export async function registrarEgresoCaja(
   cajaId: string,
   concepto: string,
   monto: number,
   usuarioId: string,
   observaciones?: string,
+  _idempotencyKey?: string,
 ) {
   const { error: errMov } = await db.from('movimientos_caja').insert({
     caja_id:      cajaId,
