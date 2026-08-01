@@ -392,16 +392,23 @@ export async function getVentasSemana() {
   return data ?? [];
 }
 
-// NOTA: se revirtió temporalmente a la implementación original (sin RPC)
-// porque Supabase está rechazando las llamadas a fn_crear_venta a nivel de
-// API Gateway (antes de llegar a Postgres/PostgREST) con un error de apikey
-// que no corresponde a la realidad — confirmado en los Logs del dashboard,
-// categoría "API Gateway" vs "PostgREST". No es un problema de este código,
-// de tu SQL, ni de tus permisos (todo eso quedó verificado). El RPC
-// fn_crear_venta sigue existiendo en tu base de datos, sin usarse por
-// ahora — no estorba, y se puede retomar cuando ese tema de Supabase se
-// resuelva. Mientras tanto, esto es exactamente lo que tenías antes,
-// funcionando.
+// NOTA: se revirtió el intento de hacerlo con RPC (fn_crear_venta) porque
+// Supabase la rechaza a nivel de API Gateway — no es un problema de este
+// código ni de tu SQL, y ya se reportó como un tema aparte a resolver con
+// soporte de Supabase. Esto NO significa que no se pueda prevenir
+// duplicados: se logra el mismo resultado usando solo `.from()` (REST
+// normal, ya confirmado que funciona sin problemas), sin necesidad de
+// ninguna función RPC. La columna `idempotency_key` que agregó
+// sql/002_atomicidad_offline.sql en la tabla `ventas` se sigue usando.
+//
+// Cómo funciona:
+// 1. Si ya existe una venta con esta idempotency_key (porque el cajero
+//    reintentó tras un error/corte), se reutiliza esa fila en vez de crear
+//    una venta nueva — así nunca se duplica la boleta/nota.
+// 2. Si esa venta ya existente quedó a medias (p.ej. se guardó la cabecera
+//    pero el corte de red pasó antes de guardar los items/comprobante), se
+//    RETOMA — se completan solo las partes que faltan, no se repite lo que
+//    ya se guardó (eso evitaría duplicar el descuento de stock).
 export async function crearVenta(payload: CrearVentaPayload, usuarioId: string): Promise<Venta> {
   // ── Cálculo correcto para Perú ────────────────────────────────────────────
   // Los precios de los productos YA incluyen IGV (precio de venta al público).
@@ -416,53 +423,105 @@ export async function crearVenta(payload: CrearVentaPayload, usuarioId: string):
 
   const fechaLima = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
-  // 1. Insertar cabecera de venta
-  const { data: venta, error: errVenta } = await db
-    .from('ventas')
-    .insert({
-      cliente_id:       payload.cliente_id ?? null,
-      usuario_id:       usuarioId,
-      caja_id:          payload.caja_id ?? null,
-      mesa_id:          payload.mesa_id ?? null,
-      tipo_comprobante: payload.tipo_comprobante,
-      metodo_pago:      payload.metodo_pago,
-      subtotal,
-      igv,
-      total,
-      descuento_monto:  payload.descuento_monto ?? 0,
-      monto_recibido:   payload.monto_recibido ?? null,
-      vuelto,
-      notas:            payload.notas ?? null,
-      estado:           'completada',
-      fecha_local:      fechaLima,
-      hora_local: new Date().toLocaleTimeString('en-GB', {
-        timeZone: 'America/Lima',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      }),
-    })
-    .select()
-    .single();
-  if (errVenta) throw errVenta;
+  let venta: Venta | null = null;
 
-  // 2. Insertar items → el trigger trg_descontar_stock_venta descuenta stock automáticamente
-  const items = payload.items.map(i => ({
-    venta_id:        venta.id,
-    producto_id:     i.id,
-    cantidad:        i.cantidad,
-    precio_unitario: i.precio,
-  }));
-  const { error: errItems } = await db.from('venta_items').insert(items);
-  if (errItems) throw errItems;
+  // 0. ¿Ya existe una venta con esta key? (reintento tras un error anterior)
+  if (payload.idempotency_key) {
+    const { data: existente, error: errBuscar } = await db
+      .from('ventas')
+      .select('*')
+      .eq('idempotency_key', payload.idempotency_key)
+      .maybeSingle();
+    if (errBuscar) throw errBuscar;
+    if (existente) venta = existente as Venta;
+  }
 
-  // 3. Insertar comprobante → el trigger fn_generar_numero_comprobante genera el número
-  const { error: errComp } = await db.from('comprobantes').insert({
-    venta_id:   venta.id,
-    tipo:       payload.tipo_comprobante,
-    usuario_id: usuarioId,
-  });
-  if (errComp) throw errComp;
+  // 1. Insertar cabecera de venta (solo si no existía ya de un intento previo)
+  if (!venta) {
+    const { data: nueva, error: errVenta } = await db
+      .from('ventas')
+      .insert({
+        cliente_id:       payload.cliente_id ?? null,
+        usuario_id:       usuarioId,
+        caja_id:          payload.caja_id ?? null,
+        mesa_id:          payload.mesa_id ?? null,
+        tipo_comprobante: payload.tipo_comprobante,
+        metodo_pago:      payload.metodo_pago,
+        subtotal,
+        igv,
+        total,
+        descuento_monto:  payload.descuento_monto ?? 0,
+        monto_recibido:   payload.monto_recibido ?? null,
+        vuelto,
+        notas:            payload.notas ?? null,
+        estado:           'completada',
+        fecha_local:      fechaLima,
+        hora_local: new Date().toLocaleTimeString('en-GB', {
+          timeZone: 'America/Lima',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+        }),
+        idempotency_key:  payload.idempotency_key ?? null,
+      })
+      .select()
+      .single();
+    if (errVenta) {
+      // Dos clicks casi simultáneos con la misma key: el otro ganó la
+      // carrera y ya insertó la fila. En vez de fallar, se recupera esa fila.
+      if (payload.idempotency_key && (errVenta as { code?: string }).code === '23505') {
+        const { data: ganadora, error: errGanadora } = await db
+          .from('ventas')
+          .select('*')
+          .eq('idempotency_key', payload.idempotency_key)
+          .single();
+        if (errGanadora) throw errGanadora;
+        venta = ganadora as Venta;
+      } else {
+        throw errVenta;
+      }
+    } else {
+      venta = nueva as Venta;
+    }
+  }
+
+  // 2. ¿Ya tiene items? Si es una venta retomada que ya los tenía, no se
+  //    repiten (repetirlos duplicaría el descuento de stock).
+  const { count: itemsExistentes, error: errCountItems } = await db
+    .from('venta_items')
+    .select('id', { count: 'exact', head: true })
+    .eq('venta_id', venta.id);
+  if (errCountItems) throw errCountItems;
+
+  if (!itemsExistentes) {
+    // El trigger trg_descontar_stock_venta descuenta stock automáticamente
+    const items = payload.items.map(i => ({
+      venta_id:        venta!.id,
+      producto_id:     i.id,
+      cantidad:        i.cantidad,
+      precio_unitario: i.precio,
+    }));
+    const { error: errItems } = await db.from('venta_items').insert(items);
+    if (errItems) throw errItems;
+  }
+
+  // 3. ¿Ya tiene comprobante? Mismo criterio: no se duplica.
+  const { data: compExistente, error: errCompExistente } = await db
+    .from('comprobantes')
+    .select('id')
+    .eq('venta_id', venta.id)
+    .maybeSingle();
+  if (errCompExistente) throw errCompExistente;
+
+  if (!compExistente) {
+    // El trigger fn_generar_numero_comprobante genera el número
+    const { error: errComp } = await db.from('comprobantes').insert({
+      venta_id:   venta.id,
+      tipo:       payload.tipo_comprobante,
+      usuario_id: usuarioId,
+    });
+    if (errComp) throw errComp;
+  }
 
   // 4. Si viene de mesa, cerrar pedido y poner mesa en limpieza
   if (payload.mesa_id) {
@@ -475,7 +534,7 @@ export async function crearVenta(payload: CrearVentaPayload, usuarioId: string):
     await actualizarEstadoMesa(payload.mesa_id, 'limpieza');
   }
 
-  return venta as Venta;
+  return venta;
 }
 
 export async function anularVenta(ventaId: string) {
@@ -594,19 +653,37 @@ export async function getMovimientosCaja(cajaId: string) {
   return data ?? [];
 }
 
-// NOTA: revertido temporalmente por el mismo motivo que crearVenta (ver
-// nota arriba) — el RPC fn_registrar_egreso_caja está rechazado a nivel de
-// API Gateway de Supabase, no por este código. Se mantiene el parámetro
-// idempotencyKey en la firma (sin usar) para no romper el llamado desde
-// ModalEgreso.tsx.
+// NOTA: mismo enfoque que crearVenta — sin RPC (bloqueada por Supabase a
+// nivel de Gateway), pero con idempotencia real usando solo `.from()` y la
+// columna `idempotency_key` que ya agregó sql/002_atomicidad_offline.sql en
+// `movimientos_caja`. Si el cajero reintenta tras un corte de conexión con
+// la misma key, se detecta el egreso ya guardado y no se vuelve a
+// descontar el saldo.
+//
+// Limitación que sí queda pendiente (y para la que la RPC atómica sí era
+// la solución completa): si DOS egresos distintos de la MISMA caja ocurren
+// en el mismo instante exacto, el descuento de saldo (leer → restar →
+// guardar) todavía podría pisarse entre sí — es un caso mucho más raro que
+// el de "reintento por mala conexión" que esto sí resuelve del todo, pero
+// no quiero decir que quedó 100% blindado si no es cierto.
 export async function registrarEgresoCaja(
   cajaId: string,
   concepto: string,
   monto: number,
   usuarioId: string,
   observaciones?: string,
-  _idempotencyKey?: string,
+  idempotencyKey?: string,
 ) {
+  if (idempotencyKey) {
+    const { data: existente, error: errBuscar } = await db
+      .from('movimientos_caja')
+      .select('id')
+      .eq('idempotency_key', idempotencyKey)
+      .maybeSingle();
+    if (errBuscar) throw errBuscar;
+    if (existente) return; // ya se registró en un intento anterior — no repetir
+  }
+
   const { error: errMov } = await db.from('movimientos_caja').insert({
     caja_id:      cajaId,
     tipo:         'egreso',
@@ -614,8 +691,13 @@ export async function registrarEgresoCaja(
     monto,
     usuario_id:   usuarioId,
     observaciones: observaciones ?? null,
+    idempotency_key: idempotencyKey ?? null,
   });
-  if (errMov) throw errMov;
+  if (errMov) {
+    // Dos intentos casi simultáneos con la misma key: el otro ya insertó.
+    if (idempotencyKey && (errMov as { code?: string }).code === '23505') return;
+    throw errMov;
+  }
 
   const { data: cajaData, error: errRead } = await supabase
     .from('cajas')

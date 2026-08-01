@@ -33,7 +33,7 @@ interface TomaPedidoProps {
 export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPedidoProps) {
   const { usuario }           = useAuth();
   // ✅ Productos vienen del contexto global (ya cargados en Fase 2)
-  const { productos: todosProductos } = useGlobalData();
+  const { productos: todosProductos, actualizarMesaLocal, refetchMesas } = useGlobalData();
 
   // ── Catálogo filtrado para venta (tipo venta + stock_tienda > 0) ──────────
   const productos = useMemo(
@@ -166,6 +166,13 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
         const nuevo = await crearPedido(mesa.id, usuario.id);
         idPedido = nuevo.id;
         setPedidoId(idPedido);
+        // FIX DELAY MESAS: mismo arreglo que ya se aplicó en MesasView.tsx —
+        // este flujo (abrir mesa desde Venta Mesa) nunca tenía actualización
+        // optimista, dependía 100% de Realtime/poll para que OTRAS pantallas
+        // se enteraran. Esto solo ayuda a esta pestaña; la propagación a
+        // otras pestañas/usuarios sigue dependiendo del canal Realtime (ya
+        // reforzado con reconexión + poll de respaldo en GlobalDataContext).
+        actualizarMesaLocal(mesa.id, { estado: 'ocupada', pedido_id: idPedido } as Partial<MesaRow>);
       }
 
       await Promise.all(
@@ -183,14 +190,22 @@ export function TomaPedido({ mesa, onVolver, onConfirmado, cajaAbierta }: TomaPe
       if (mesa.estado !== 'ocupada') {
         await actualizarEstadoMesa(mesa.id, 'ocupada');
       }
+      refetchMesas().catch(console.error);
 
       onConfirmado();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Error al confirmar el pedido');
+      // Si la mesa se pintó como ocupada optimistamente pero algo falló
+      // después (ej. al agregar items), se revierte para no mostrar un
+      // estado que no se llegó a guardar de verdad.
+      if (mesa.estado !== 'ocupada') {
+        actualizarMesaLocal(mesa.id, { estado: mesa.estado } as Partial<MesaRow>);
+        refetchMesas().catch(console.error);
+      }
     } finally {
       setConfirmando(false);
     }
-  }, [carrito, usuario, pedidoId, mesa, notas, onConfirmado]);
+  }, [carrito, usuario, pedidoId, mesa, notas, onConfirmado, actualizarMesaLocal, refetchMesas]);
 
   const cfg = ESTADO_CFG[mesa.estado ?? 'disponible'];
 

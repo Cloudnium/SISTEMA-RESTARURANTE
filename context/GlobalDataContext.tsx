@@ -299,6 +299,16 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
     return () => clearInterval(poll);
   }, [usuarioActual, refetchPedidosCocina]);
 
+  // ── Poll de respaldo para comprobantes ──────────────────────────────────────
+  // Mismo motivo que el de mesas: antes esto dependía 100% del socket de
+  // Realtime, sin ningún respaldo — de ahí que a veces el comprobante recién
+  // emitido no apareciera hasta recargar la página a mano.
+  useEffect(() => {
+    if (!usuarioActual) return;
+    const poll = setInterval(() => { refetchComprobantes(); }, 15_000);
+    return () => clearInterval(poll);
+  }, [usuarioActual, refetchComprobantes]);
+
   // ── Refs estables para el canal Realtime ──────────────────────────────────
   const refetchProductosRef       = useRef(refetchProductos);
   const refetchMesasRef           = useRef(refetchMesas);
@@ -558,12 +568,22 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       });
 
     // Red de seguridad adicional: si el canal estaba dormido y la pestaña
-    // recupera el foco (o vuelve la conexión), se refresca mesas y cocina al
-    // toque en vez de esperar al poll de 30s. Cubre justo el caso de tener
-    // dos ventanas abiertas (ej. admin y cajero) donde una queda sin foco.
+    // recupera el foco (o vuelve la conexión), se refresca al toque en vez
+    // de esperar al poll de 30s. Cubre el caso de tener dos ventanas abiertas
+    // (ej. admin y cajero) donde una queda sin foco.
+    //
+    // FIX COMPROBANTES: `comprobantes` (y ventas recientes / cajas) no tenían
+    // NINGÚN respaldo — dependían 100% del socket de Realtime. Si se dormía
+    // justo al cobrar, el comprobante recién creado no aparecía hasta
+    // recargar la página a mano. Se agregan aquí, igual que ya se hizo con
+    // mesas/cocina.
     const refrescarAlVolver = () => {
       refetchMesasRef.current();
       refetchPedidosCocinaRef.current();
+      refetchComprobantesRef.current();
+      refetchVentasRecientesRef.current();
+      refetchVentasRef.current();
+      refetchCajasRef.current();
     };
     const onVisibility = () => {
       if (document.visibilityState === 'visible') refrescarAlVolver();
