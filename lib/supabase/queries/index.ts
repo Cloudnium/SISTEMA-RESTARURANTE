@@ -241,7 +241,13 @@ export async function getPedidoActivoMesa(mesaId: string): Promise<Pedido | null
 }
 
 export async function crearPedido(mesaId: string, usuarioId: string, clienteId?: string) {
-  const { data, error } = await db
+  // FIX DELAY: antes se esperaba el INSERT del pedido completo y RECIÉN
+  // ahí arrancaba el UPDATE de la mesa (dos round-trips secuenciales). La
+  // mesa no depende del resultado del insert (ya tenemos mesaId), así que
+  // ambas escrituras van en paralelo — la mesa queda 'ocupada' en BD (y por
+  // lo tanto el realtime tiene algo que propagar a otras sesiones) tan
+  // pronto como el más lento de los dos termine, no la suma de ambos.
+  const insertPedido = db
     .from('pedidos')
     .insert({
       mesa_id:    mesaId,
@@ -250,9 +256,12 @@ export async function crearPedido(mesaId: string, usuarioId: string, clienteId?:
     })
     .select()
     .single();
-  if (error) throw error;
 
-  await actualizarEstadoMesa(mesaId, 'ocupada');
+  const [{ data, error }] = await Promise.all([
+    insertPedido,
+    actualizarEstadoMesa(mesaId, 'ocupada'),
+  ]);
+  if (error) throw error;
   return data as Pedido;
 }
 
@@ -402,13 +411,36 @@ export async function getVentasSemana() {
 // sql/002_atomicidad_offline.sql en la tabla `ventas` se sigue usando.
 //
 // Cómo funciona:
-// 1. Si ya existe una venta con esta idempotency_key (porque el cajero
-//    reintentó tras un error/corte), se reutiliza esa fila en vez de crear
-//    una venta nueva — así nunca se duplica la boleta/nota.
+// 1. Se intenta insertar la venta directo. Si la idempotency_key ya existía
+//    (reintento tras un error/corte), el índice único la rechaza (23505) y
+//    ahí sí se recupera la fila ya creada — así nunca se duplica la
+//    boleta/nota.
 // 2. Si esa venta ya existente quedó a medias (p.ej. se guardó la cabecera
 //    pero el corte de red pasó antes de guardar los items/comprobante), se
 //    RETOMA — se completan solo las partes que faltan, no se repite lo que
 //    ya se guardó (eso evitaría duplicar el descuento de stock).
+//
+// FIX DELAY (venta mesa): la versión anterior hacía hasta 8 round-trips
+// SECUENCIALES por cada cobro (chequear key existente → insertar venta →
+// chequear items existentes → insertar items → chequear comprobante
+// existente → insertar comprobante → actualizar pedido → actualizar mesa),
+// uno detrás de otro — de ahí el retraso al cobrar en Venta Mesa, y de
+// rebote el retraso en que la mesa pasara a "limpieza" en las demás
+// sesiones (ese UPDATE era literalmente el último de 8 pasos en fila).
+// Ahora:
+//   • Se salta el SELECT previo "¿ya existe la key?" — se intenta insertar
+//     directo y solo se recupera la fila existente si el insert choca de
+//     verdad (23505). En el caso normal (sin reintento, que es +99% de los
+//     cobros) esto ahorra un round-trip completo.
+//   • Si la venta se ACABA de crear en este mismo request, es imposible que
+//     ya tenga items o comprobante — se insertan directo y EN PARALELO, sin
+//     preguntarle antes a la base. El chequeo "¿qué falta?" solo corre
+//     cuando la venta viene de un reintento real (rarísimo).
+//   • El update de pedidos y el de mesa no dependen entre sí → van en
+//     paralelo en vez de uno tras otro.
+// Resultado: camino normal pasa de 8 round-trips en fila a 3 (insertar
+// venta → [insertar items + comprobante en paralelo] → [actualizar pedido +
+// mesa en paralelo]).
 export async function crearVenta(payload: CrearVentaPayload, usuarioId: string): Promise<Venta> {
   // ── Cálculo correcto para Perú ────────────────────────────────────────────
   // Los precios de los productos YA incluyen IGV (precio de venta al público).
@@ -424,114 +456,130 @@ export async function crearVenta(payload: CrearVentaPayload, usuarioId: string):
   const fechaLima = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Lima' });
 
   let venta: Venta | null = null;
+  let ventaRecienCreada = true;
 
-  // 0. ¿Ya existe una venta con esta key? (reintento tras un error anterior)
-  if (payload.idempotency_key) {
-    const { data: existente, error: errBuscar } = await db
-      .from('ventas')
-      .select('*')
-      .eq('idempotency_key', payload.idempotency_key)
-      .maybeSingle();
-    if (errBuscar) throw errBuscar;
-    if (existente) venta = existente as Venta;
-  }
+  // 1. Insertar la venta directo (sin chequeo previo — ver nota arriba).
+  const { data: nueva, error: errVenta } = await db
+    .from('ventas')
+    .insert({
+      cliente_id:       payload.cliente_id ?? null,
+      usuario_id:       usuarioId,
+      caja_id:          payload.caja_id ?? null,
+      mesa_id:          payload.mesa_id ?? null,
+      tipo_comprobante: payload.tipo_comprobante,
+      metodo_pago:      payload.metodo_pago,
+      subtotal,
+      igv,
+      total,
+      descuento_monto:  payload.descuento_monto ?? 0,
+      monto_recibido:   payload.monto_recibido ?? null,
+      vuelto,
+      notas:            payload.notas ?? null,
+      estado:           'completada',
+      fecha_local:      fechaLima,
+      hora_local: new Date().toLocaleTimeString('en-GB', {
+        timeZone: 'America/Lima',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      }),
+      idempotency_key:  payload.idempotency_key ?? null,
+    })
+    .select()
+    .single();
 
-  // 1. Insertar cabecera de venta (solo si no existía ya de un intento previo)
-  if (!venta) {
-    const { data: nueva, error: errVenta } = await db
-      .from('ventas')
-      .insert({
-        cliente_id:       payload.cliente_id ?? null,
-        usuario_id:       usuarioId,
-        caja_id:          payload.caja_id ?? null,
-        mesa_id:          payload.mesa_id ?? null,
-        tipo_comprobante: payload.tipo_comprobante,
-        metodo_pago:      payload.metodo_pago,
-        subtotal,
-        igv,
-        total,
-        descuento_monto:  payload.descuento_monto ?? 0,
-        monto_recibido:   payload.monto_recibido ?? null,
-        vuelto,
-        notas:            payload.notas ?? null,
-        estado:           'completada',
-        fecha_local:      fechaLima,
-        hora_local: new Date().toLocaleTimeString('en-GB', {
-          timeZone: 'America/Lima',
-          hour: '2-digit',
-          minute: '2-digit',
-          second: '2-digit',
-        }),
-        idempotency_key:  payload.idempotency_key ?? null,
-      })
-      .select()
-      .single();
-    if (errVenta) {
-      // Dos clicks casi simultáneos con la misma key: el otro ganó la
-      // carrera y ya insertó la fila. En vez de fallar, se recupera esa fila.
-      if (payload.idempotency_key && (errVenta as { code?: string }).code === '23505') {
-        const { data: ganadora, error: errGanadora } = await db
-          .from('ventas')
-          .select('*')
-          .eq('idempotency_key', payload.idempotency_key)
-          .single();
-        if (errGanadora) throw errGanadora;
-        venta = ganadora as Venta;
-      } else {
-        throw errVenta;
-      }
+  if (errVenta) {
+    // Dos clicks casi simultáneos con la misma key, o un reintento real tras
+    // un corte: el índice único ya tiene esa key guardada. Se recupera esa
+    // fila en vez de fallar.
+    if (payload.idempotency_key && (errVenta as { code?: string }).code === '23505') {
+      const { data: existente, error: errExistente } = await db
+        .from('ventas')
+        .select('*')
+        .eq('idempotency_key', payload.idempotency_key)
+        .single();
+      if (errExistente) throw errExistente;
+      venta = existente as Venta;
+      ventaRecienCreada = false; // viene de un intento anterior: puede tener items/comprobante ya
     } else {
-      venta = nueva as Venta;
+      throw errVenta;
     }
+  } else {
+    venta = nueva as Venta;
   }
 
-  // 2. ¿Ya tiene items? Si es una venta retomada que ya los tenía, no se
-  //    repiten (repetirlos duplicaría el descuento de stock).
-  const { count: itemsExistentes, error: errCountItems } = await db
-    .from('venta_items')
-    .select('id', { count: 'exact', head: true })
-    .eq('venta_id', venta.id);
-  if (errCountItems) throw errCountItems;
-
-  if (!itemsExistentes) {
-    // El trigger trg_descontar_stock_venta descuenta stock automáticamente
+  // 2 y 3. Items y comprobante.
+  if (ventaRecienCreada) {
+    // La venta se acaba de crear en ESTE request → es matemáticamente
+    // imposible que ya tenga items o comprobante. Se insertan directo y en
+    // paralelo, sin preguntarle antes a la base.
     const items = payload.items.map(i => ({
       venta_id:        venta!.id,
       producto_id:     i.id,
       cantidad:        i.cantidad,
       precio_unitario: i.precio,
     }));
-    const { error: errItems } = await db.from('venta_items').insert(items);
+
+    const [{ error: errItems }, { error: errComp }] = await Promise.all([
+      // El trigger trg_descontar_stock_venta descuenta stock automáticamente
+      db.from('venta_items').insert(items),
+      // El trigger fn_generar_numero_comprobante genera el número
+      db.from('comprobantes').insert({
+        venta_id:   venta.id,
+        tipo:       payload.tipo_comprobante,
+        usuario_id: usuarioId,
+      }),
+    ]);
     if (errItems) throw errItems;
-  }
-
-  // 3. ¿Ya tiene comprobante? Mismo criterio: no se duplica.
-  const { data: compExistente, error: errCompExistente } = await db
-    .from('comprobantes')
-    .select('id')
-    .eq('venta_id', venta.id)
-    .maybeSingle();
-  if (errCompExistente) throw errCompExistente;
-
-  if (!compExistente) {
-    // El trigger fn_generar_numero_comprobante genera el número
-    const { error: errComp } = await db.from('comprobantes').insert({
-      venta_id:   venta.id,
-      tipo:       payload.tipo_comprobante,
-      usuario_id: usuarioId,
-    });
     if (errComp) throw errComp;
+  } else {
+    // Venta retomada de un reintento real: sí puede tener partes ya
+    // guardadas de un intento anterior — hay que chequear qué falta antes
+    // de insertar, para no duplicar el descuento de stock ni el comprobante.
+    const { count: itemsExistentes, error: errCountItems } = await db
+      .from('venta_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('venta_id', venta.id);
+    if (errCountItems) throw errCountItems;
+
+    if (!itemsExistentes) {
+      const items = payload.items.map(i => ({
+        venta_id:        venta!.id,
+        producto_id:     i.id,
+        cantidad:        i.cantidad,
+        precio_unitario: i.precio,
+      }));
+      const { error: errItems } = await db.from('venta_items').insert(items);
+      if (errItems) throw errItems;
+    }
+
+    const { data: compExistente, error: errCompExistente } = await db
+      .from('comprobantes')
+      .select('id')
+      .eq('venta_id', venta.id)
+      .maybeSingle();
+    if (errCompExistente) throw errCompExistente;
+
+    if (!compExistente) {
+      const { error: errComp } = await db.from('comprobantes').insert({
+        venta_id:   venta.id,
+        tipo:       payload.tipo_comprobante,
+        usuario_id: usuarioId,
+      });
+      if (errComp) throw errComp;
+    }
   }
 
-  // 4. Si viene de mesa, cerrar pedido y poner mesa en limpieza
+  // 4. Si viene de mesa, cerrar pedido y poner mesa en limpieza — en
+  // paralelo, no dependen entre sí.
   if (payload.mesa_id) {
-    await db
-      .from('pedidos')
-      .update({ estado: 'entregado' })
-      .eq('mesa_id', payload.mesa_id)
-      .not('estado', 'in', '("entregado","cancelado")');
-
-    await actualizarEstadoMesa(payload.mesa_id, 'limpieza');
+    await Promise.all([
+      db.from('pedidos')
+        .update({ estado: 'entregado' })
+        .eq('mesa_id', payload.mesa_id)
+        .not('estado', 'in', '("entregado","cancelado")'),
+      actualizarEstadoMesa(payload.mesa_id, 'limpieza'),
+    ]);
   }
 
   return venta;
@@ -660,6 +708,10 @@ export async function getMovimientosCaja(cajaId: string) {
 // la misma key, se detecta el egreso ya guardado y no se vuelve a
 // descontar el saldo.
 //
+// FIX DELAY: mismo cambio que en crearVenta — se salta el SELECT previo
+// "¿ya existe la key?" e inserta directo, recuperando la fila solo si el
+// insert choca de verdad (23505). Un round-trip menos en el caso normal.
+//
 // Limitación que sí queda pendiente (y para la que la RPC atómica sí era
 // la solución completa): si DOS egresos distintos de la MISMA caja ocurren
 // en el mismo instante exacto, el descuento de saldo (leer → restar →
@@ -674,16 +726,6 @@ export async function registrarEgresoCaja(
   observaciones?: string,
   idempotencyKey?: string,
 ) {
-  if (idempotencyKey) {
-    const { data: existente, error: errBuscar } = await db
-      .from('movimientos_caja')
-      .select('id')
-      .eq('idempotency_key', idempotencyKey)
-      .maybeSingle();
-    if (errBuscar) throw errBuscar;
-    if (existente) return; // ya se registró en un intento anterior — no repetir
-  }
-
   const { error: errMov } = await db.from('movimientos_caja').insert({
     caja_id:      cajaId,
     tipo:         'egreso',
@@ -694,7 +736,8 @@ export async function registrarEgresoCaja(
     idempotency_key: idempotencyKey ?? null,
   });
   if (errMov) {
-    // Dos intentos casi simultáneos con la misma key: el otro ya insertó.
+    // Dos intentos casi simultáneos con la misma key, o un reintento real:
+    // el otro ya insertó. No se repite el descuento de saldo.
     if (idempotencyKey && (errMov as { code?: string }).code === '23505') return;
     throw errMov;
   }

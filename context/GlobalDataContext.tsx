@@ -15,7 +15,7 @@ import {
   type MetricasDashboard, type TopProductoHoy,
 } from '@/lib/supabase/queries';
 import type {
-  Mesa, Cliente, Caja, Venta, Pedido,
+  Mesa, Cliente, Caja, Venta, Pedido, PedidoItem,
   Compra, ProduccionCocina, Usuario, Notificacion,
 } from '@/lib/supabase/types';
 import type { Producto as Producto } from '@/lib/supabase/types';
@@ -338,6 +338,21 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
   useEffect(() => { refetchMetricasRef.current        = refetchMetricas;        }, [refetchMetricas]);
   useEffect(() => { refetchPedidosCocinaRef.current   = refetchPedidosCocina;   }, [refetchPedidosCocina]);
 
+  // ── Debounce compartido para colapsar ráfagas de eventos Realtime ─────────
+  // Abrir una mesa dispara un INSERT en `pedidos` + un UPDATE en `mesas` casi
+  // juntos; enviar 4 productos a cocina dispara 4 INSERT en `pedido_items`
+  // seguidos. Antes, cada uno de esos eventos llamaba a su refetch pesado
+  // (con joins) por separado y en paralelo — N requests compitiendo entre sí
+  // por la misma data, lo que en la práctica ATRASABA más la actualización
+  // que un solo fetch (más notorio en cocina, cuyo query es más pesado:
+  // pedidos + items + productos + mesas). Ahora, los eventos que llegan
+  // dentro de la misma ráfaga (150ms) colapsan en una sola llamada.
+  const debounceTimersRef = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
+  const refetchDebounced = useCallback((key: string, fn: () => void, delay = 150) => {
+    if (debounceTimersRef.current[key]) clearTimeout(debounceTimersRef.current[key]);
+    debounceTimersRef.current[key] = setTimeout(fn, delay);
+  }, []);
+
   // ── Canal Realtime único ──────────────────────────────────────────────────
   useEffect(() => {
     const canal = supabase
@@ -354,9 +369,30 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       )
 
       // ── MESAS ────────────────────────────────────────────────────────────
+      // FIX DELAY ENTRE SESIONES (cajero ↔ admin): antes, este handler solo
+      // disparaba refetchMesasRef.current() — un round-trip de red completo
+      // a getMesasConPedido() (vista con joins). En la pestaña que originó
+      // el cambio, actualizarMesaLocal() ya pinta el nuevo estado al
+      // instante (ver MesasView/TomaPedido); pero en CUALQUIER OTRA sesión
+      // (ej. admin viendo la mesa que el cajero acaba de ocupar), no había
+      // optimismo: había que esperar a que ese refetch completo terminara
+      // para recién ver 'ocupada'. Ese es el "milisegundo" de retraso que
+      // abre la ventana para que dos usuarios intenten tomar la misma mesa.
+      // Ahora, el payload que ya trae el propio evento Realtime (payload.new
+      // con id/estado/pedido_id, etc. — columnas reales de `mesas`) se
+      // aplica de inmediato sobre el estado en memoria, igual que hace
+      // actualizarMesaLocal, ANTES de disparar el refetch de reconciliación
+      // (que sigue corriendo en segundo plano para traer pedido_activo y
+      // demás datos del join, sin bloquear el ícono/estado visible).
       .on('postgres_changes',
         { event: 'UPDATE', schema: 'public', table: 'mesas' },
-        () => refetchMesasRef.current()
+        (payload) => {
+          const actualizada = payload.new as Mesa;
+          setMesas(prev =>
+            prev.map(m => (m.id === actualizada.id ? { ...m, ...actualizada } : m))
+          );
+          refetchMesasRef.current();
+        }
       )
       .on('postgres_changes',
         { event: 'INSERT', schema: 'public', table: 'mesas' },
@@ -368,20 +404,41 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       )
 
       // ── PEDIDOS → refetch mesas + tickets de cocina ──────────────────────
+      // FIX CASCADA: se agrupan (debounce, ver arriba) las ráfagas de eventos
+      // en vez de disparar un refetch pesado por cada fila que cambia.
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'pedidos' },
         () => {
-          refetchMesasRef.current();
-          refetchPedidosCocinaRef.current();
+          refetchDebounced('mesas', () => refetchMesasRef.current());
+          refetchDebounced('pedidosCocina', () => refetchPedidosCocinaRef.current());
         }
       )
 
-      // ── PEDIDO_ITEMS → refetch tickets de cocina ─────────────────────────
+      // ── PEDIDO_ITEMS → actualiza cocina ───────────────────────────────────
       // Antes lo escuchaba un canal aparte ('kds-cocina') dentro de
       // CocinaView.tsx; se centraliza aquí junto con el resto del realtime.
+      // FIX: en vez de esperar SIEMPRE el refetch completo (pesado: pedidos +
+      // items + productos + mesas) para reflejar un cambio de estado de item
+      // (ej. cocina marca "listo"), se aplica de inmediato sobre el ticket ya
+      // en memoria — así todas las sesiones (cajero, admin, otra pantalla de
+      // cocina) lo ven al toque. El refetch (debounced) sigue corriendo
+      // detrás para reconciliar totales o items nuevos que no están en el
+      // payload (ej. join con producto).
       .on('postgres_changes',
         { event: '*', schema: 'public', table: 'pedido_items' },
-        () => refetchPedidosCocinaRef.current()
+        (payload) => {
+          if (payload.eventType === 'UPDATE') {
+            const item = payload.new as PedidoItem;
+            setPedidosCocina(prev =>
+              prev.map(p =>
+                p.id === item.pedido_id
+                  ? { ...p, items: (p.items ?? []).map(i => (i.id === item.id ? { ...i, ...item } : i)) }
+                  : p
+              )
+            );
+          }
+          refetchDebounced('pedidosCocina', () => refetchPedidosCocinaRef.current());
+        }
       )
 
       // ── VENTAS INSERT ────────────────────────────────────────────────────
@@ -598,7 +655,7 @@ export function GlobalDataProvider({ children }: { children: React.ReactNode }) 
       window.removeEventListener('focus', refrescarAlVolver);
       window.removeEventListener('online', refrescarAlVolver);
     };
-  }, []);
+  }, [refetchDebounced]);
 
   // ── Valor del contexto ────────────────────────────────────────────────────
   const value = useMemo<GlobalDataContextType>(() => ({
