@@ -1,4 +1,4 @@
-// middleware.ts
+// proxy.ts
 // Protección de rutas a nivel de SERVIDOR — corre antes de renderizar cualquier página.
 // Complementa (no reemplaza) el RLS de Supabase: RLS protege los DATOS,
 // esto protege qué PÁGINAS se pueden siquiera cargar.
@@ -14,7 +14,7 @@ import { createServerClient } from '@supabase/ssr';
 // Rutas que cualquiera puede ver sin haber iniciado sesión
 const RUTAS_PUBLICAS = ['/login'];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
   const supabase = createServerClient(
