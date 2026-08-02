@@ -6,6 +6,7 @@ import React, {
   useCallback, useRef,
 } from 'react';
 import { supabase } from '@/lib/supabase/client';
+import { abrirCaja } from '@/lib/supabase/queries';
 import type { Usuario } from '@/lib/supabase/types';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -227,6 +228,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     setUsuario(perfil);
     usuarioRef.current = perfil;
+
+    // Apertura automática de caja: si el usuario (admin/cajero) tiene una
+    // caja vinculada y esta está cerrada, se abre sola al iniciar sesión
+    // (monto inicial S/ 0.00, igual que la apertura manual desde el Navbar).
+    // No bloquea el login si falla — no es crítico, el usuario puede abrirla
+    // manualmente después.
+    if (
+      perfil.caja_id &&
+      perfil.caja?.estado === 'cerrada' &&
+      (perfil.rol === 'admin' || perfil.rol === 'cajero')
+    ) {
+      try {
+        await abrirCaja(perfil.caja_id, perfil.id, 0);
+      } catch (e) {
+        console.warn('[Auth] No se pudo abrir la caja automáticamente:', e);
+      }
+    }
 
     // FIX: registrarSesion ahora es awaited — la sesión está en BD
     // antes de que iniciarVigilancia empiece el polling.
