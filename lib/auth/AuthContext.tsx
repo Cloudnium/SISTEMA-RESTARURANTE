@@ -6,7 +6,7 @@ import React, {
   useCallback, useRef,
 } from 'react';
 import { supabase } from '@/lib/supabase/client';
-import { abrirCaja } from '@/lib/supabase/queries';
+import { abrirCaja, cerrarCaja } from '@/lib/supabase/queries';
 import type { Usuario } from '@/lib/supabase/types';
 
 // ─── Constantes ───────────────────────────────────────────────────────────────
@@ -137,12 +137,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const u = usuarioRef.current;
     if (u?.caja_id) {
       try {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await (supabase as any)
-          .from('cajas')
-          .update({ estado: 'cerrada', fecha_cierre: new Date().toISOString() })
-          .eq('id', u.caja_id)
-          .eq('estado', 'abierta');
+        // FIX: antes se hacía un update directo a la tabla (sin usuario_cierre
+        // y con new Date().toISOString(), que causaba el desfase de hora ya
+        // corregido). Ahora usa el mismo RPC fn_cerrar_caja que el botón
+        // "Cerrar" manual: calcula la hora en el servidor con la convención
+        // Lima correcta y además registra quién cerró la caja.
+        // fn_cerrar_caja lanza excepción si la caja ya está cerrada — no es
+        // crítico, el catch de abajo lo ignora igual que antes.
+        await cerrarCaja(u.caja_id, u.id);
       } catch { /* no crítico */ }
     }
 
