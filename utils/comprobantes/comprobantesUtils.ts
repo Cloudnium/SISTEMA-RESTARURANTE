@@ -313,15 +313,31 @@ export async function fetchComprobantePorVenta(
 }
  
 // ─── Imprime automáticamente el comprobante de una venta recién creada ────────
-// Busca el comprobante + sus items y abre la ventana de impresión, usando el
-// mismo formato (buildPrintHTML) que la vista de Comprobantes.
+// 1) Intenta imprimir directo (sin diálogo) vía el Agente de Impresión local,
+//    si está instalado y emparejado en esta caja.
+// 2) Si no está disponible (aún no instalado, apagado, o el usuario rechazó
+//    el permiso de "red local" del navegador), cae al comportamiento anterior:
+//    abre una ventana con el ticket y dispara window.print().
+//
+// Import dinámico hacia printAgentClient para evitar una dependencia circular
+// entre módulos (printAgentClient también usa helpers de este archivo).
 export async function imprimirComprobanteDeVenta(ventaId: string): Promise<boolean> {
   const comp = await fetchComprobantePorVenta(ventaId);
   if (!comp) return false;
- 
+
   const items = await fetchVentaItems(ventaId).catch(() => []);
   const compConItems: CompDetalle = { ...comp, items, itemsLoaded: true };
- 
+
+  try {
+    const { agenteDisponible, imprimirComprobante } = await import('@/utils/print-agent/printAgentClient');
+    if (await agenteDisponible()) {
+      await imprimirComprobante(compConItems);
+      return true;
+    }
+  } catch (err) {
+    console.warn('Agente de impresión no disponible, se usa impresión del navegador:', err);
+  }
+
   const w = window.open('', '_blank', 'width=440,height=720');
   if (!w) return false;
   w.document.write(buildPrintHTML(compConItems));

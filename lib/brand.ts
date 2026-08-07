@@ -22,7 +22,7 @@ export const B = {
 import {
   LayoutDashboard, ShoppingCart, ChefHat, Package, Users, FileText,
   BarChart3, Building2, CreditCard, Warehouse, Truck, Database,
-  UtensilsCrossed, ClipboardList,
+  UtensilsCrossed, ClipboardList, Printer,
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 
@@ -74,6 +74,7 @@ export const MENU_SECTIONS: MenuSection[] = [
   {
     title: 'Herramientas',
     items: [
+      { id: 'impresion',   label: 'Impresión',        icon: Printer    },
       { id: 'respaldo',    label: 'Respaldo',         icon: Database   },
     ],
   },

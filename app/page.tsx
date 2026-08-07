@@ -20,6 +20,7 @@ import { UsuariosView } from '@/components/usuarios/UsuariosView';
 import { CajasView } from '@/components/cajas/CajasView';
 import { ComprasView } from '@/components/compras/ComprasView';
 import { RespaldoView } from '@/components/respaldo/RespaldoView';
+import { ImpresionView } from '@/components/impresion/ImpresionView';
 import { MENU_SECTIONS } from '@/lib/brand';
 import { useAuth } from '@/lib/auth/AuthContext';
 import AuthGuard from '@/components/auth/AuthGuard';
@@ -37,7 +38,7 @@ const VETADO_CAJERO = [...SOLO_ADMIN, 'cocina']; // Cocina es de cocinero + admi
 // Cocinero solo debe operar Cocina, Productos (insumos) y Almacén.
 const VETADO_COCINERO = [
   ...SOLO_ADMIN,
-  'mesas', 'venta-mesa', 'ventas', 'cajas', 'comprobantes', 'compras', 'clientes',
+  'mesas', 'venta-mesa', 'ventas', 'cajas', 'comprobantes', 'compras', 'clientes', 'impresion',
 ];
 
 // Vista con la que debe arrancar cada rol al iniciar sesión o recargar.
@@ -88,6 +89,8 @@ function renderView(active: string): React.ReactNode {
     case 'reportes':     return <AuthGuard requiredRole="admin"><ReportesView /></AuthGuard>;
 
     case 'respaldo':     return <AuthGuard requiredRole="admin"><RespaldoView /></AuthGuard>;
+
+    case 'impresion':    return <AuthGuard requiredRole={['admin', 'cajero']}><ImpresionView /></AuthGuard>;
 
     default:            return <PlaceholderView label={getLabelById(active)} />;
   }
