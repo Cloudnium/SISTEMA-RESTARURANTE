@@ -71,9 +71,14 @@ function baseUrl() {
 //   debe hacerse con calma la primera vez, aceptando el permiso del navegador,
 //   y no confiar en que el primer intento silencioso (justo tras confirmar una
 //   venta) vaya a funcionar sin que el usuario haya aceptado el permiso antes.
-// `targetAddressSpace: 'local'` ayuda a que Chrome identifique la petición
-// como local desde el vamos (se ignora en navegadores que no lo soportan).
-const LOCAL_FETCH_EXTRA: Record<string, unknown> = { targetAddressSpace: 'local' };
+//
+// IMPORTANTE: `targetAddressSpace` DEBE coincidir con la dirección real del
+// agente. Como el agente escucha en 127.0.0.1 (loopback de la misma PC), el
+// valor correcto es `'loopback'`. Si pones `'local'`, Chrome 142+ rechaza la
+// petición con: "Request had a target IP address space of `local` yet the
+// resource is in address space `loopback`". Se ignora en navegadores que no
+// soportan esta opción.
+const LOCAL_FETCH_EXTRA: Record<string, unknown> = { targetAddressSpace: 'loopback' };
 
 async function agentFetch(path: string, init: RequestInit = {}) {
   const token = getToken();
@@ -136,37 +141,208 @@ export async function imprimirDocumento(elements: TicketElement[], target?: Prin
   });
 }
 
-// ─── Helper de alto nivel: arma el ticket de un comprobante y lo imprime ──────
-// Ajusta el layout a tu formato real de ticket térmico (80mm / 48 columnas).
-
 import type { CompDetalle } from '@/constants/comprobantes/comprobantesConstants';
-import { fmtMoney, fmtFecha, buildQrData } from '@/utils/comprobantes/comprobantesUtils';
+import { TIPO_CFG, METODO_LABEL } from '@/constants/comprobantes/comprobantesConstants';
+import {
+  fmtMoney, fmtFechaSolo, fmtHora, numeroALetras,
+  generarCodigoHash, buildQrData, EMISOR_RUC,
+} from '@/utils/comprobantes/comprobantesUtils';
 
-export function construirTicketComprobante(comp: CompDetalle): TicketElement[] {
-  const elements: TicketElement[] = [
-    { type: 'text', value: 'MADRE · Postres y Café', align: 'center', bold: true, size: 'double' },
-    { type: 'text', value: 'RUC 20000000000', align: 'center' },
-    { type: 'line' },
-    { type: 'text', value: comp.tipo.toUpperCase().replace('_', ' '), align: 'center', bold: true },
-    { type: 'text', value: comp.numero, align: 'center' },
-    { type: 'text', value: fmtFecha(comp.fecha_emision), align: 'center' },
-    { type: 'line' }
-  ];
+// ─── Helpers de layout del ticket térmico (80mm / 48 columnas) ────────────────
+function padEnd(s: string, n: number): string {
+  return (s + ' '.repeat(Math.max(0, n))).slice(0, n);
+}
+function padStart(s: string, n: number): string {
+  return (' '.repeat(Math.max(0, n)) + s).slice(-Math.max(0, n));
+}
 
-  (comp.items || []).forEach((item) => {
-    elements.push({
-      type: 'text',
-      value: `${item.cantidad} x ${item.producto?.nombre ?? 'Producto'}`
-    });
-    elements.push({ type: 'text', value: fmtMoney(item.subtotal), align: 'right' });
+/** Divide un texto en pedazos de a lo más `maxLen` caracteres (nombres largos). */
+function dividirTexto(texto: string, maxLen: number): string[] {
+  const limpio = texto.trim() || 'Producto';
+  const pedazos: string[] = [];
+  for (let i = 0; i < limpio.length; i += maxLen) {
+    pedazos.push(limpio.slice(i, i + maxLen));
+  }
+  return pedazos;
+}
+
+/** Cabecera de la tabla de items (Cant | Descripción | P.Unit | Total). */
+function cabeceraItems(): string {
+  return padEnd('CANT', 6) + padEnd('DESCRIPCIÓN', 22) + padStart('P.UNIT', 10) + padStart('TOTAL', 10);
+}
+
+/** Fila(s) de un item: si el nombre es muy largo, continúa en la línea siguiente. */
+function lineasItem(cantidad: number, nombre: string, punit: string, total: string): string[] {
+  const ANCHO_DESC = 22;
+  const pedazos = dividirTexto(nombre, ANCHO_DESC);
+  return pedazos.map((pedazo, i) => {
+    const esUltimo = i === pedazos.length - 1;
+    const cant = padStart(String(cantidad), 4) + '  ';
+    const desc = padEnd(pedazo, ANCHO_DESC);
+    const precio = esUltimo ? punit : '';
+    const subtotal = esUltimo ? total : '';
+    if (i === 0) return cant + desc + padStart(precio, 10) + padStart(subtotal, 10);
+    return padEnd('', 6) + desc + padStart(precio, 10) + padStart(subtotal, 10);
   });
+}
+
+/** Carga el logo (public/icons/icono.png) como base64 para imprimirlo como imagen. */
+async function cargarLogoTicket(): Promise<string | null> {
+  try {
+    const res = await fetch('/icons/icono.png');
+    const blob = await res.blob();
+    const dataUrl = await new Promise<string | null>((resolve) => {
+      const reader = new FileReader();
+      reader.onloadend = () => {
+        const result = typeof reader.result === 'string' ? reader.result : null;
+        resolve(result?.includes(',') ? result.split(',')[1] : null);
+      };
+      reader.onerror = () => resolve(null);
+      reader.readAsDataURL(blob);
+    });
+    return dataUrl;
+  } catch {
+    return null;
+  }
+}
+
+// ─── Helper de alto nivel: arma el ticket de un comprobante y lo imprime ──────
+// Replica el MISMO diseño que `buildPrintHTML()` (utils/comprobantes/comprobantesUtils.ts)
+// — el formato real que se ve/descarga desde la sección Comprobantes — pero
+// usando los elementos ESC/POS que entiende el Agente de Impresión en vez de HTML.
+// Cualquier cambio de diseño en buildPrintHTML() debería reflejarse aquí también.
+export async function construirTicketComprobante(comp: CompDetalle): Promise<TicketElement[]> {
+  const logo = await cargarLogoTicket();
+
+  const cfg = TIPO_CFG[comp.tipo];
+  const total = comp.monto;
+  const subtotal = comp.subtotal ?? total;
+  const igv = comp.igv ?? 0;
+  const descuento = comp.descuento_monto ?? 0;
+  const esNota = comp.tipo === 'nota_venta';
+  const recibido = comp.monto_recibido ?? total;
+  const saldo = Math.max(0, total - recibido);
+  const baseImponible = total / 1.18;
+  const igvCalculado = total - baseImponible;
+  const fechaSolo = fmtFechaSolo(comp.fecha_emision);
+  const horaSolo = fmtHora(comp.fecha_emision);
+  const metodoLabel = METODO_LABEL[comp.metodo_pago] ?? comp.metodo_pago;
+
+  // RUC solo en factura, DNI solo en boleta — en Nota de Venta no se muestra
+  // ningún documento del cliente (así es el diseño real, ver clienteRows en
+  // buildPrintHTML / ModalVerComprobante.tsx).
+  const docCliente = comp.tipo === 'factura' ? comp.ruc : comp.tipo === 'boleta' ? comp.dni : null;
+  const labelDoc = comp.tipo === 'factura' ? 'RUC' : 'DNI';
+
+  const elements: TicketElement[] = [];
+
+  // ── Encabezado (logo + marca + RUC) ─────────────────────────────────────
+  if (logo) {
+    elements.push({ type: 'image', base64: logo });
+  } else {
+    elements.push({ type: 'text', value: 'MADRE · POSTRES Y CAFÉ', align: 'center', bold: true, size: 'double' });
+  }
+  elements.push({ type: 'text', value: `RUC ${EMISOR_RUC}`, align: 'center' });
+  elements.push({ type: 'line' });
+
+  elements.push({ type: 'text', value: cfg.headerLabel, align: 'center', bold: true });
+  elements.push({ type: 'text', value: comp.numero, align: 'center', bold: true });
+  if (comp.estado === 'anulado') {
+    elements.push({ type: 'text', value: '*** ANULADO ***', align: 'center', bold: true });
+  }
+  elements.push({ type: 'line' });
+
+  // ── Datos del cliente / fechas ──────────────────────────────────────────
+  elements.push({ type: 'text', value: `F. Emisión: ${fechaSolo}   Hora: ${horaSolo}` });
+  elements.push({ type: 'text', value: `Cliente: ${comp.cliente_nombre ?? 'Cliente General'}` });
+  if (docCliente) elements.push({ type: 'text', value: `${labelDoc}: ${docCliente}` });
+  // "Cajero:" se muestra SIEMPRE (los 3 tipos de comprobante), no solo en
+  // boleta/factura — antes faltaba en la Nota de Venta.
+  elements.push({ type: 'text', value: `Cajero: ${comp.usuario_nombre}` });
+  elements.push({ type: 'line' });
+
+  // ── Tabla de items ──────────────────────────────────────────────────────
+  elements.push({ type: 'text', value: cabeceraItems(), bold: true });
+  if (comp.items && comp.items.length > 0) {
+    comp.items.forEach((item) => {
+      lineasItem(
+        item.cantidad,
+        item.producto?.nombre ?? 'Producto',
+        fmtMoney(item.precio_unitario),
+        fmtMoney(item.subtotal),
+      ).forEach((linea) => {
+        elements.push({ type: 'text', value: linea });
+      });
+    });
+  } else {
+    elements.push({ type: 'text', value: 'Sin detalle registrado', align: 'center' });
+  }
 
   elements.push({ type: 'line' });
-  elements.push({ type: 'text', value: `TOTAL: ${fmtMoney(comp.monto)}`, align: 'right', bold: true, size: 'double' });
-  elements.push({ type: 'feed', lines: 1 });
-  elements.push({ type: 'qr', value: buildQrData(comp), size: 5 });
-  elements.push({ type: 'feed', lines: 2 });
-  elements.push({ type: 'text', value: '¡Gracias por su compra!', align: 'center' });
+
+  // ── Totales / cierre — mismo branching que el bloque `bloqueNota` de ────
+  //    buildPrintHTML(): la Nota de Venta usa un diseño distinto (con SALDO)
+  //    y NO muestra el monto en letras ni el desglose de IGV. ────────────
+  const lineaTotal = (label: string, valor: string) => {
+    elements.push({ type: 'text', value: `${label} ${valor}`, align: 'right' });
+  };
+
+  if (esNota) {
+    // El diseño real NO muestra ninguna línea de subtotal en la Nota de
+    // Venta salvo que haya descuento (ver el bloque "Totales — Nota de
+    // Venta" en ModalVerComprobante.tsx). Antes se agregaba un "Subtotal:"
+    // siempre, incluso sin descuento, y encima con un valor mal calculado
+    // (comp.subtotal traía la base imponible con IGV extraído, que no
+    // aplica a una Nota de Venta).
+    if (descuento > 0) {
+      lineaTotal('Subtotal bruto:', fmtMoney(subtotal + descuento));
+      lineaTotal('Descuento:', `- ${fmtMoney(descuento)}`);
+    }
+    elements.push({ type: 'line' });
+    elements.push({ type: 'text', value: `TOTAL A PAGAR: ${fmtMoney(total)}`, align: 'center', bold: true, size: 'double' });
+    elements.push({ type: 'line' });
+    elements.push({ type: 'text', value: 'PAGOS:', bold: true });
+    elements.push({ type: 'text', value: `- ${fechaSolo} - ${metodoLabel} - ${fmtMoney(recibido)}` });
+    elements.push({ type: 'text', value: `SALDO: ${fmtMoney(saldo)}`, align: 'center', bold: true });
+  } else {
+    if (descuento > 0) {
+      lineaTotal('Subtotal bruto:', fmtMoney(subtotal + descuento));
+      lineaTotal('Descuento:', `- ${fmtMoney(descuento)}`);
+    }
+    if (comp.tipo === 'factura') {
+      lineaTotal('Op. Gravadas:', fmtMoney(baseImponible));
+      lineaTotal('IGV (18%):', fmtMoney(igvCalculado));
+    } else {
+      lineaTotal('Op. Gravadas:', fmtMoney(subtotal));
+      lineaTotal('IGV:', fmtMoney(igv));
+    }
+    elements.push({ type: 'line' });
+    elements.push({ type: 'text', value: `TOTAL A PAGAR: ${fmtMoney(total)}`, align: 'center', bold: true, size: 'double' });
+    elements.push({ type: 'text', value: numeroALetras(total), align: 'center' });
+    elements.push({ type: 'line' });
+
+    // ── QR + hash / condición de pago / vendedor (igual que el qr-block) ──
+    elements.push({ type: 'qr', value: buildQrData(comp), size: 5 });
+    elements.push({ type: 'text', value: `CÓDIGO HASH: ${generarCodigoHash(comp.id)}`, align: 'center' });
+    elements.push({ type: 'text', value: 'CONDICIÓN DE PAGO: Contado', align: 'center' });
+    elements.push({ type: 'text', value: `PAGOS: ${metodoLabel} - ${fmtMoney(recibido)}`, align: 'center' });
+    elements.push({ type: 'text', value: `VENDEDOR: ${comp.usuario_nombre}`, align: 'center' });
+  }
+
+  if (comp.notas) {
+    elements.push({ type: 'line' });
+    elements.push({ type: 'text', value: `NOTA: ${comp.notas}` });
+  }
+
+  // ── Pie ─────────────────────────────────────────────────────────────────
+  elements.push({ type: 'line' });
+  const footerLegal =
+    comp.tipo === 'boleta'     ? 'Representación impresa de la BOLETA DE VENTA ELECTRÓNICA' :
+    comp.tipo === 'factura'    ? 'Representación impresa de la FACTURA ELECTRÓNICA' :
+                                 'Representación impresa de la NOTA DE VENTA';
+  elements.push({ type: 'text', value: footerLegal, align: 'center' });
+  elements.push({ type: 'text', value: '¡GRACIAS POR SU COMPRA!', align: 'center', bold: true });
+  elements.push({ type: 'text', value: 'www.madrepostres.pe', align: 'center' });
   elements.push({ type: 'feed', lines: 3 });
   elements.push({ type: 'cut' });
 
@@ -181,6 +357,6 @@ export async function imprimirComprobante(comp: CompDetalle) {
       'El agente de impresión no está instalado o no está corriendo en este equipo.'
     );
   }
-  const elements = construirTicketComprobante(comp);
+  const elements = await construirTicketComprobante(comp);
   return imprimirDocumento(elements);
 }

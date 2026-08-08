@@ -177,7 +177,7 @@ export function ImpresionView() {
             value={tokenInput}
             onChange={(e) => setTokenInput(e.target.value)}
             className="flex-1 min-w-[220px] px-3 py-2 rounded-lg border"
-            style={{ borderColor: B.creamDark }}
+            style={{ borderColor: B.creamDark, color: B.charcoal, background: B.white }}
           />
           <input
             type="number"
@@ -185,7 +185,7 @@ export function ImpresionView() {
             value={puertoInput}
             onChange={(e) => setPuertoInput(e.target.value)}
             className="w-28 px-3 py-2 rounded-lg border"
-            style={{ borderColor: B.creamDark }}
+            style={{ borderColor: B.creamDark, color: B.charcoal, background: B.white }}
           />
           <Btn onClick={handleEmparejar}>Emparejar</Btn>
         </div>
@@ -206,7 +206,7 @@ export function ImpresionView() {
             <div className="space-y-2">
               {impresoras.map((p) => (
                 <div key={p.name} className="flex items-center justify-between px-3 py-2 rounded-lg" style={{ background: B.pageBg }}>
-                  <span>{p.name}</span>
+                  <span style={{ color: B.charcoal, fontWeight: 500 }}>{p.name}</span>
                   <Btn onClick={() => handleUsarUsb(p.name)} disabled={cargando}>
                     Usar como predeterminada
                   </Btn>
@@ -226,7 +226,7 @@ export function ImpresionView() {
                 value={ipRed}
                 onChange={(e) => setIpRed(e.target.value)}
                 className="flex-1 min-w-[180px] px-3 py-2 rounded-lg border"
-                style={{ borderColor: B.creamDark }}
+                style={{ borderColor: B.creamDark, color: B.charcoal, background: B.white }}
               />
               <input
                 type="number"
@@ -234,7 +234,7 @@ export function ImpresionView() {
                 value={puertoRed}
                 onChange={(e) => setPuertoRed(e.target.value)}
                 className="w-28 px-3 py-2 rounded-lg border"
-                style={{ borderColor: B.creamDark }}
+                style={{ borderColor: B.creamDark, color: B.charcoal, background: B.white }}
               />
               <Btn onClick={handleUsarRed} disabled={cargando}>Usar como predeterminada</Btn>
             </div>

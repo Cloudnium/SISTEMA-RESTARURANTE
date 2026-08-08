@@ -12,12 +12,14 @@
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
+/* NOTA: se removió el bloque "@media (prefers-color-scheme: dark)" que
+   cambiaba --foreground a un gris casi blanco (#ededed). Todo el diseño de
+   este sistema usa colores de marca fijos (fondo crema, tarjetas claras,
+   etc. — ver lib/brand.ts) y NO está preparado para modo oscuro, así que
+   cuando el sistema operativo del usuario tenía activado el modo oscuro,
+   los <input> (y cualquier texto sin color explícito) heredaban ese blanco
+   y quedaban casi invisibles sobre fondos claros — por ejemplo en la
+   sección Impresión. Forzamos siempre el tema claro. */
 
 body {
   background: var(--background);
