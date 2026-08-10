@@ -112,8 +112,26 @@ export async function agenteDisponible(): Promise<boolean> {
       ...(LOCAL_FETCH_EXTRA as RequestInit)
     });
     clearTimeout(timeout);
+    if (!res.ok) {
+      console.warn(`[print-agent] /health respondió HTTP ${res.status} — se trata como no disponible.`);
+    }
     return res.ok;
-  } catch {
+  } catch (err) {
+    // IMPORTANTE: antes esto fallaba en silencio (devolvía false sin decir
+    // por qué), así que un bloqueo del navegador (permiso de "red local"
+    // denegado/no concedido, Brave Shields, timeout real, agente apagado,
+    // etc.) se veía IDÉNTICO desde afuera y era imposible diagnosticar cuál
+    // era. Ahora queda el motivo real en la consola (F12 → Console) — si
+    // vuelve a caer al diálogo del navegador, ese mensaje dice por qué.
+    const motivo = err instanceof DOMException && err.name === 'AbortError'
+      ? 'tiempo de espera agotado (4s) — el agente no respondió a tiempo'
+      : err instanceof Error ? err.message : String(err);
+    console.warn(
+      `[print-agent] Agente no disponible: ${motivo}. ` +
+      'Si el agente SÍ está corriendo en este equipo, revisa: ' +
+      '1) que este sitio tenga permiso de "acceso a la red local" en la configuración del navegador/Brave Shields, ' +
+      '2) que no haya otro proceso usando el puerto del agente.'
+    );
     return false;
   }
 }
@@ -206,11 +224,14 @@ async function cargarLogoTicket(): Promise<string | null> {
   }
 }
 
-// ─── Helper de alto nivel: arma el ticket de un comprobante y lo imprime ──────
-// Replica el MISMO diseño que `buildPrintHTML()` (utils/comprobantes/comprobantesUtils.ts)
-// — el formato real que se ve/descarga desde la sección Comprobantes — pero
-// usando los elementos ESC/POS que entiende el Agente de Impresión en vez de HTML.
-// Cualquier cambio de diseño en buildPrintHTML() debería reflejarse aquí también.
+// ─── (Legacy) Arma el ticket reconstruyéndolo con comandos de texto ESC/POS ──
+// NOTA: esto YA NO es lo que usa `imprimirComprobante()` — se dejó como
+// referencia/respaldo por si algún día se necesita un modo texto-plano (más
+// liviano, sin bitmap) para una impresora muy lenta o de muy baja
+// resolución. El camino normal ahora es `ticketRaster.ts`
+// (renderComprobanteAImagen), que renderiza el HTML real y lo manda como
+// imagen — así el ticket impreso queda igual al diseño, no una
+// aproximación con texto.
 export async function construirTicketComprobante(comp: CompDetalle): Promise<TicketElement[]> {
   const logo = await cargarLogoTicket();
 
@@ -349,7 +370,14 @@ export async function construirTicketComprobante(comp: CompDetalle): Promise<Tic
   return elements;
 }
 
-/** Uso típico tras confirmar una venta: */
+/**
+ * Uso típico tras confirmar una venta.
+ *
+ * Renderiza el comprobante EXACTAMENTE como se ve en Comprobantes (mismo
+ * HTML de buildPrintHTML, convertido a imagen con ticketRaster.ts) y lo
+ * manda como bitmap — así el ticket impreso queda igual al diseño real, no
+ * una recreación aproximada con texto. Ver comentario en ticketRaster.ts.
+ */
 export async function imprimirComprobante(comp: CompDetalle) {
   const disponible = await agenteDisponible();
   if (!disponible) {
@@ -357,6 +385,12 @@ export async function imprimirComprobante(comp: CompDetalle) {
       'El agente de impresión no está instalado o no está corriendo en este equipo.'
     );
   }
-  const elements = await construirTicketComprobante(comp);
+  const { renderComprobanteAImagen } = await import('./ticketRaster');
+  const base64 = await renderComprobanteAImagen(comp);
+  const elements: TicketElement[] = [
+    { type: 'image', base64 },
+    { type: 'feed', lines: 3 },
+    { type: 'cut' },
+  ];
   return imprimirDocumento(elements);
 }

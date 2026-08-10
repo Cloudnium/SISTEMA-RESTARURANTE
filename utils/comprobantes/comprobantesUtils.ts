@@ -330,12 +330,34 @@ export async function imprimirComprobanteDeVenta(ventaId: string): Promise<boole
 
   try {
     const { agenteDisponible, imprimirComprobante } = await import('@/utils/print-agent/printAgentClient');
-    if (await agenteDisponible()) {
-      await imprimirComprobante(compConItems);
-      return true;
+    const disponible = await agenteDisponible();
+
+    if (disponible) {
+      try {
+        await imprimirComprobante(compConItems);
+        return true;
+      } catch (errImpresion) {
+        // OJO: el agente SÍ respondió el /health (está prendido y
+        // conectado), pero algo falló DESPUÉS, al armar/mandar el ticket
+        // (ej. un error generando la imagen del ticket, o al mandarla a la
+        // impresora). Antes esto cambiaba directo al navegador SIN decir
+        // nada — quedaba idéntico a "el agente no está prendido", que es
+        // un diagnóstico distinto y falso en este caso.
+        console.error(
+          '[print-agent] El agente está conectado pero FALLÓ al imprimir el ticket ' +
+          '(se usa el diálogo del navegador como respaldo). Motivo real:',
+          errImpresion
+        );
+      }
+    } else {
+      console.warn(
+        '[print-agent] agenteDisponible() devolvió false — el navegador no pudo ' +
+        'confirmar que el agente esté corriendo, aunque esté instalado. Revisa el ' +
+        'mensaje anterior de "[print-agent] Agente no disponible: ..." para el motivo exacto.'
+      );
     }
   } catch (err) {
-    console.warn('Agente de impresión no disponible, se usa impresión del navegador:', err);
+    console.error('[print-agent] Error inesperado usando el agente de impresión:', err);
   }
 
   const w = window.open('', '_blank', 'width=440,height=720');

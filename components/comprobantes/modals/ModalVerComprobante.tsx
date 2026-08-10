@@ -34,8 +34,50 @@ export function ModalVerComprobante({ comp, onClose, onAnular }: Props) {
 
   const [confirmando, setConfirmando] = useState(false);
   const [anulando,    setAnulando]    = useState(false);
+  const [imprimiendo, setImprimiendo] = useState(false);
 
-  const handlePrint = () => {
+  const handlePrint = async () => {
+    setImprimiendo(true);
+    try {
+      // 1) Si el Agente de Impresión está conectado en este equipo, imprime
+      //    directo y automático (sin diálogo del navegador) — igual que al
+      //    confirmar una venta. Este es el camino correcto: no depende de
+      //    que el driver de Windows/el navegador adivinen el largo del
+      //    rollo de papel (eso era lo que generaba tickets con metros de
+      //    papel en blanco al usar el diálogo de impresión nativo).
+      const { agenteDisponible, imprimirComprobante } = await import('@/utils/print-agent/printAgentClient');
+      const disponible = await agenteDisponible();
+
+      if (disponible) {
+        try {
+          await imprimirComprobante(comp);
+          return;
+        } catch (errImpresion) {
+          // El agente SÍ respondió (está prendido), pero falló al armar o
+          // mandar el ticket — es un problema distinto a "no está
+          // disponible", por eso se loguea aparte.
+          console.error(
+            '[print-agent] El agente está conectado pero FALLÓ al imprimir el ticket ' +
+            '(se usa el diálogo del navegador como respaldo). Motivo real:',
+            errImpresion
+          );
+        }
+      } else {
+        console.warn(
+          '[print-agent] agenteDisponible() devolvió false — revisa el mensaje anterior ' +
+          'de "[print-agent] Agente no disponible: ..." para el motivo exacto.'
+        );
+      }
+    } catch (err) {
+      console.error('[print-agent] Error inesperado usando el agente de impresión:', err);
+    } finally {
+      setImprimiendo(false);
+    }
+
+    // 2) Sin agente instalado en este equipo: se cae al diálogo nativo del
+    //    navegador (requiere elegir la impresora y el largo de papel a
+    //    mano — puede necesitar ajustar "Tamaño del papel" a un rollo
+    //    continuo en vez de un tamaño fijo como "80 x 297mm").
     const w = window.open('', '_blank', 'width=440,height=720');
     if (!w) return;
     w.document.write(buildPrintHTML(comp));
@@ -409,11 +451,12 @@ export function ModalVerComprobante({ comp, onClose, onAnular }: Props) {
               )}
               <button
                 onClick={handlePrint}
-                className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2"
+                disabled={imprimiendo}
+                className="flex-1 py-2.5 rounded-xl text-sm font-bold flex items-center justify-center gap-2 disabled:opacity-60"
                 style={{ background: B.charcoal, color: B.cream }}
               >
-                <Download className="w-4 h-4" />
-                Imprimir
+                {imprimiendo ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
+                {imprimiendo ? 'Imprimiendo…' : 'Imprimir'}
               </button>
             </div>
           )}
