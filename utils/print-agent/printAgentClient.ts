@@ -14,7 +14,7 @@ const STORAGE_KEY_PORT = 'printAgent.port';
 const DEFAULT_PORT = 4321;
 
 export type TicketElement =
-  | { type: 'text'; value: string; align?: 'left' | 'center' | 'right'; bold?: boolean; size?: 'normal' | 'double' | 'quad' }
+  | { type: 'text'; value: string; align?: 'left' | 'center' | 'right'; bold?: boolean; size?: 'normal' | 'double' | 'quad'; underline?: boolean }
   | { type: 'line' }
   | { type: 'feed'; lines?: number }
   | { type: 'qr'; value: string; size?: number }
@@ -204,10 +204,19 @@ function lineasItem(cantidad: number, nombre: string, punit: string, total: stri
   });
 }
 
-/** Carga el logo (public/icons/icono.png) como base64 para imprimirlo como imagen. */
+/** Carga el logo EXCLUSIVO para el ticket térmico (public/icons/logo-ticket.png)
+ *  como base64 para imprimirlo como imagen.
+ *
+ *  Este logo es un archivo aparte de `/icons/icono.png` (el que usa el resto
+ *  del sistema: sidebar, login, comprobantes en pantalla, PDF, etc.) a
+ *  propósito: `icono.png` está pensado para pantalla (colores crema/verde
+ *  claro), y una impresora térmica solo pinta puntos negros — ese logo
+ *  saldría prácticamente invisible en papel. `logo-ticket.png` es una
+ *  versión en negro sólido pensada para imprimirse, y SOLO se usa acá (no
+ *  se debe usar en ningún otro lado del sistema). */
 async function cargarLogoTicket(): Promise<string | null> {
   try {
-    const res = await fetch('/icons/icono.png');
+    const res = await fetch('/icons/logo-ticket.png');
     const blob = await res.blob();
     const dataUrl = await new Promise<string | null>((resolve) => {
       const reader = new FileReader();
@@ -224,14 +233,17 @@ async function cargarLogoTicket(): Promise<string | null> {
   }
 }
 
-// ─── (Legacy) Arma el ticket reconstruyéndolo con comandos de texto ESC/POS ──
-// NOTA: esto YA NO es lo que usa `imprimirComprobante()` — se dejó como
-// referencia/respaldo por si algún día se necesita un modo texto-plano (más
-// liviano, sin bitmap) para una impresora muy lenta o de muy baja
-// resolución. El camino normal ahora es `ticketRaster.ts`
-// (renderComprobanteAImagen), que renderiza el HTML real y lo manda como
-// imagen — así el ticket impreso queda igual al diseño, no una
-// aproximación con texto.
+// ─── Arma el ticket de impresión automática con comandos ESC/POS nativos ────
+// Este es el formato PROPIO del ticket que sale por la impresora térmica al
+// hacer una venta (o al reimprimir desde Comprobantes). Es intencionalmente
+// DISTINTO del formato que se ve en pantalla / PDF (`buildPrintHTML` en
+// comprobantesUtils.ts, que no se toca): ese HTML se convertía antes a una
+// imagen (con html2canvas, ver ticketRaster.ts) y se mandaba como bitmap a
+// la impresora — funcionaba, pero al pasar por una "foto" del ticket se
+// perdía nitidez (texto con jaggies, más lento de imprimir). Acá se arma el
+// ticket con texto real (fuente propia de la impresora) más el logo, el QR
+// y el código de barras como comandos ESC/POS nativos — mismo contenido,
+// pero nítido, rápido y sin depender de renderizar HTML fuera de pantalla.
 export async function construirTicketComprobante(comp: CompDetalle): Promise<TicketElement[]> {
   const logo = await cargarLogoTicket();
 
@@ -266,7 +278,7 @@ export async function construirTicketComprobante(comp: CompDetalle): Promise<Tic
   elements.push({ type: 'text', value: `RUC ${EMISOR_RUC}`, align: 'center' });
   elements.push({ type: 'line' });
 
-  elements.push({ type: 'text', value: cfg.headerLabel, align: 'center', bold: true });
+  elements.push({ type: 'text', value: cfg.headerLabel, align: 'center', bold: true, underline: true });
   elements.push({ type: 'text', value: comp.numero, align: 'center', bold: true });
   if (comp.estado === 'anulado') {
     elements.push({ type: 'text', value: '*** ANULADO ***', align: 'center', bold: true });
@@ -277,9 +289,11 @@ export async function construirTicketComprobante(comp: CompDetalle): Promise<Tic
   elements.push({ type: 'text', value: `F. Emisión: ${fechaSolo}   Hora: ${horaSolo}` });
   elements.push({ type: 'text', value: `Cliente: ${comp.cliente_nombre ?? 'Cliente General'}` });
   if (docCliente) elements.push({ type: 'text', value: `${labelDoc}: ${docCliente}` });
-  // "Cajero:" se muestra SIEMPRE (los 3 tipos de comprobante), no solo en
-  // boleta/factura — antes faltaba en la Nota de Venta.
-  elements.push({ type: 'text', value: `Cajero: ${comp.usuario_nombre}` });
+  // El nombre del cajero/vendedor va UNA sola vez — como "VENDEDOR:" junto
+  // al QR en boleta/factura (ver más abajo), o no se muestra en la Nota de
+  // Venta (así es el diseño real de los 3 tickets). No se repite acá arriba
+  // como "Cajero:" para no duplicar el mismo dato dos veces en el mismo
+  // ticket.
   elements.push({ type: 'line' });
 
   // ── Tabla de items ──────────────────────────────────────────────────────
@@ -371,12 +385,19 @@ export async function construirTicketComprobante(comp: CompDetalle): Promise<Tic
 }
 
 /**
- * Uso típico tras confirmar una venta.
+ * Uso típico tras confirmar una venta (y también al reimprimir desde
+ * Comprobantes).
  *
- * Renderiza el comprobante EXACTAMENTE como se ve en Comprobantes (mismo
- * HTML de buildPrintHTML, convertido a imagen con ticketRaster.ts) y lo
- * manda como bitmap — así el ticket impreso queda igual al diseño real, no
- * una recreación aproximada con texto. Ver comentario en ticketRaster.ts.
+ * Arma el ticket con su propio formato de impresión — texto ESC/POS nativo
+ * + logo + QR/código de barras — en vez de mandar una imagen "fotografiada"
+ * del HTML de pantalla. `construirTicketComprobante()` ya arma el mensaje
+ * completo (encabezado, items, totales, pie) y ya termina con `feed` +
+ * `cut`, así que acá solo se pide y se envía.
+ *
+ * (El render a imagen vía html2canvas — `ticketRaster.ts` — se dejó en el
+ * proyecto sin usarse por defecto, por si en algún momento hiciera falta un
+ * calco pixel-a-pixel del diseño de pantalla; para la impresión normal del
+ * día a día, este camino de texto nativo es más nítido y más rápido.)
  */
 export async function imprimirComprobante(comp: CompDetalle) {
   const disponible = await agenteDisponible();
@@ -385,12 +406,6 @@ export async function imprimirComprobante(comp: CompDetalle) {
       'El agente de impresión no está instalado o no está corriendo en este equipo.'
     );
   }
-  const { renderComprobanteAImagen } = await import('./ticketRaster');
-  const base64 = await renderComprobanteAImagen(comp);
-  const elements: TicketElement[] = [
-    { type: 'image', base64 },
-    { type: 'feed', lines: 3 },
-    { type: 'cut' },
-  ];
+  const elements = await construirTicketComprobante(comp);
   return imprimirDocumento(elements);
 }

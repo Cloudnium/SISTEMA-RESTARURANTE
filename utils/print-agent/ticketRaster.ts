@@ -1,5 +1,14 @@
 // utils/print-agent/ticketRaster.ts
 //
+// NOTA (estado actual): `imprimirComprobante()` en `printAgentClient.ts` ya
+// NO usa este archivo por defecto — el ticket que sale al hacer una venta
+// se arma con texto ESC/POS nativo (`construirTicketComprobante()`), que
+// imprime más nítido y más rápido que convertir el HTML a imagen. Este
+// archivo se deja disponible por si alguna vez hace falta un calco
+// pixel-a-pixel del HTML de pantalla (`previsualizarTicketRaster` sigue
+// funcionando para probarlo manualmente desde la consola del navegador),
+// pero no está conectado a ningún botón del sistema actualmente.
+//
 // Por qué existe este archivo:
 // Reconstruir el ticket con comandos de texto ESC/POS (como hacía antes
 // `construirTicketComprobante` en printAgentClient.ts) NUNCA puede quedar
@@ -57,6 +66,51 @@ function incrustarImagen(html: string, urlOriginal: string, dataUri: string | nu
   return html.replace(urlOriginal, dataUri);
 }
 
+/**
+ * Descarga el logo y lo "hornea" a negro sólido (preservando su
+ * transparencia), pixel por pixel, con un <canvas> normal del navegador.
+ *
+ * Por qué hace falta esto: el CSS del ticket convierte el logo a negro con
+ * `filter: grayscale(100%) contrast(200%) brightness(0)`. Eso funciona
+ * perfecto en el navegador real (por eso se ve bien en la vista previa y al
+ * imprimir con Ctrl+P), pero `html2canvas` NO soporta la propiedad CSS
+ * `filter` — es una limitación conocida de esa librería (repinta el layout
+ * en JS puro, no usa el motor de render real del navegador). Al capturar,
+ * el filtro simplemente se ignora, y el logo se pierde o sale con sus
+ * colores originales sin convertir. La solución es no depender del CSS acá:
+ * se aplica el mismo efecto directo sobre los píxeles antes de incrustarlo.
+ */
+async function logoAdataUriNegro(url: string): Promise<string | null> {
+  try {
+    const res = await fetch(url, { mode: 'cors' });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    const bitmap = await createImageBitmap(blob);
+
+    const canvas = document.createElement('canvas');
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(bitmap, 0, 0);
+
+    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const d = imgData.data;
+    for (let i = 0; i < d.length; i += 4) {
+      // RGB -> negro puro, se conserva el canal alpha (así el logo queda
+      // como una silueta negra nítida sobre fondo transparente, igual que
+      // el brightness(0) del CSS original — pero horneado en los píxeles).
+      d[i] = 0;
+      d[i + 1] = 0;
+      d[i + 2] = 0;
+    }
+    ctx.putImageData(imgData, 0, 0);
+    return canvas.toDataURL('image/png');
+  } catch {
+    return null;
+  }
+}
+
 /** Prepara el iframe oculto con el HTML del comprobante ya listo para
  *  capturar (imágenes incrustadas, cargado, altura medida y ajustada al
  *  contenido real — nada de alturas fijas "de sobra", que es justo lo que
@@ -66,9 +120,10 @@ async function prepararIframeTicket(comp: CompDetalle): Promise<HTMLIFrameElemen
   let html = buildPrintHTML(comp);
 
   // El logo es local (mismo origen, /icons/icono.png) — no da problema de
-  // CORS, pero igual lo incrustamos como data-URI para no depender de que
-  // el iframe termine de pedirlo por red antes de capturar.
-  const logoDataUri = await imagenAdataUri('/icons/icono.png').catch(() => null);
+  // CORS, pero necesita el negro "horneado" en los píxeles porque
+  // html2canvas no soporta el CSS filter que lo pone en negro (ver
+  // logoAdataUriNegro más arriba).
+  const logoDataUri = await logoAdataUriNegro('/icons/icono.png').catch(() => null);
   if (logoDataUri) html = incrustarImagen(html, '/icons/icono.png', logoDataUri);
 
   // El QR SÍ es de otro dominio (api.qrserver.com) — este es el que de
