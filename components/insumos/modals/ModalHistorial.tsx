@@ -3,44 +3,77 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  BarChart3, Calendar, FileSpreadsheet, FileText,
-  Filter, Loader2, Search, TrendingDown, TrendingUp, X,
+  BarChart3, Calendar, FileSpreadsheet, FileText, History,
+  Loader2, Package, Search, TrendingDown, TrendingUp, X,
 } from 'lucide-react';
 import { B } from '@/lib/brand';
 import { Paginacion } from '@/components/ui';
 import { supabase } from '@/lib/supabase/client';
-import { PERIODO_OPTIONS, TIPO_OPTIONS, POR_PAGINA_HISTORIAL } from '@/constants/insumos/insumosConstants';
+import { useGlobalData } from '@/context/GlobalDataContext';
+import { TIPO_OPTIONS, POR_PAGINA_HISTORIAL } from '@/constants/insumos/insumosConstants';
 import {
-  calcFechaInicioLima, fmtLimaFecha, fmtLimaHora,
-  type HistorialItem, type PeriodoFiltro, type TipoFiltro,
+  calcFechaInicioLima, limiteConsultaISO, fmtLimaFecha, fmtLimaHora,
+  type HistorialItem, type TipoFiltro,
 } from '@/utils/insumos/insumosUtils';
 import { exportarHistorialExcel } from '@/utils/insumos/exportarHistorialExcel';
 import { exportarHistorialPdf } from '@/utils/insumos/exportarHistorialPdf';
 
+const HOY = calcFechaInicioLima('hoy');
+
+// Caché en memoria (fuera del componente) por rango "desde|hasta": el modal se
+// desmonta por completo al cerrarse (`{modalHistorial && <ModalHistorial/>}`),
+// así que sin esto perdía todo y volvía a mostrar el loader cada vez que se
+// abría. No es un caché "congelado": cada apertura sigue disparando un
+// refetch en segundo plano (silencioso) que actualiza esta caché y la
+// pantalla, igual que en ReportesView. Solo se ve el loader la primera vez
+// que se consulta un rango nuevo en la sesión.
+const historialCache: Record<string, HistorialItem[]> = {};
+
 export default function ModalHistorial({ onClose }: {
   onClose: () => void;
 }) {
-  const [historial,   setHistorial]   = useState<HistorialItem[]>([]);
-  const [cargando,    setCargando]    = useState(true);
-  const [periodo,     setPeriodo]     = useState<PeriodoFiltro>('hoy');
-  const [tipoFiltro,  setTipoFiltro]  = useState<TipoFiltro>('todos');
-  const [insumoBusc,  setInsumoBusc]  = useState('');
-  const [paginaHist,  setPaginaHist]  = useState(1);
-  const [exportando,  setExportando]  = useState<'excel' | 'pdf' | null>(null);
+  const { productos } = useGlobalData();
+
+  const claveInicial = `${HOY}|${HOY}`;
+  const [historial,      setHistorial]      = useState<HistorialItem[]>(() => historialCache[claveInicial] ?? []);
+  const [cargando,       setCargando]       = useState(() => !historialCache[claveInicial]);
+  const [fechaDesde,     setFechaDesde]     = useState(HOY);
+  const [fechaHasta,     setFechaHasta]     = useState(HOY);
+  const [tipoFiltro,     setTipoFiltro]     = useState<TipoFiltro>('todos');
+  const [productoFiltro, setProductoFiltro] = useState('todos');
+  const [paginaHist,     setPaginaHist]     = useState(1);
+  const [exportando,     setExportando]     = useState<'excel' | 'pdf' | null>(null);
+
+  // Catálogo para el selector "Producto" (mismos insumos que se listan en la vista)
+  const catalogoInsumos = useMemo(
+    () => productos.filter(p => p.tipo === 'producto_venta' && p.activo)
+      .slice().sort((a, b) => a.nombre.localeCompare(b.nombre)),
+    [productos],
+  );
 
   const cargar = useCallback(() => {
     // Diferir para evitar setState síncrono en el effect
     setTimeout(async () => {
-      setCargando(true);
+      // Si "Desde" quedó después de "Hasta", se usan invertidas para no devolver vacío
+      const desde = fechaDesde <= fechaHasta ? fechaDesde : fechaHasta;
+      const hasta = fechaDesde <= fechaHasta ? fechaHasta : fechaDesde;
+      const clave = `${desde}|${hasta}`;
+
+      // Si ya hay datos cacheados de este rango, se muestran de inmediato y el
+      // fetch de abajo corre en segundo plano (sin loader) para refrescarlos.
+      const cacheado = historialCache[clave];
+      if (cacheado) {
+        setHistorial(cacheado);
+        setCargando(false);
+      } else {
+        setCargando(true);
+      }
       try {
-      const fechaInicio = calcFechaInicioLima(periodo);
-      // Mismo bug de 5h del DEFAULT de created_at en la BD (ver insumosUtils.ts).
-      // Lo guardado está atrasado 5h respecto al instante real, así que hay que
-      // restarle 5h también al límite que le mandamos a Postgres, si no el
-      // filtro "Hoy" queda comparando contra el instante real (correcto) vs.
-      // datos guardados 5h antes (incorrectos) y deja fuera lo más reciente.
-      const limiteReal = new Date(`${fechaInicio}T00:00:00-05:00`);
-      const limiteConsulta = new Date(limiteReal.getTime() - 5 * 60 * 60 * 1000).toISOString();
+      // Mismo bug de 5h del DEFAULT de created_at en la BD (ver insumosUtils.ts):
+      // lo guardado está atrasado 5h respecto al instante real, así que hay que
+      // compensarlo también en los límites que le mandamos a Postgres.
+      const limiteDesde = limiteConsultaISO(desde);
+      const limiteHasta = limiteConsultaISO(hasta, 1); // exclusivo: inicio del día siguiente
 
       // Consultar movimientos_almacen filtrando por tipo consumo/ajuste en cocina
       const { data, error } = await supabase
@@ -56,13 +89,14 @@ export default function ModalHistorial({ onClose }: {
           stock_tienda_despues,
           observacion,
           created_at,
-          producto:productos(nombre),
+          producto:productos(nombre, categoria),
           usuario:usuarios(nombre)
         `)
         .in('tipo', ['ajuste', 'salida_cocina', 'traslado'])
-        .gte('created_at', limiteConsulta)
+        .gte('created_at', limiteDesde)
+        .lt('created_at', limiteHasta)
         .order('created_at', { ascending: false })
-        .limit(200);
+        .limit(500);
 
       if (error) throw error;
 
@@ -84,7 +118,9 @@ export default function ModalHistorial({ onClose }: {
           id:               r.id as string,
           producto_id:      r.producto_id as string,
           producto_nombre:  prod ? (prod.nombre as string) : (r.producto_id as string),
+          categoria:        prod ? (prod.categoria as string) : '—',
           delta,
+          stock_antes:      stockAntes,
           stock_resultante: stockDespues,
           observacion:      r.observacion as string | null,
           usuario_nombre:   usr ? (usr.nombre as string) : null,
@@ -92,6 +128,7 @@ export default function ModalHistorial({ onClose }: {
         };
       });
 
+      historialCache[clave] = items;
       setHistorial(items);
       } catch (e) {
         console.error('Error al cargar historial:', e);
@@ -99,7 +136,7 @@ export default function ModalHistorial({ onClose }: {
         setCargando(false);
       }
     }, 0); // fin setTimeout
-  }, [periodo]);
+  }, [fechaDesde, fechaHasta]);
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -116,12 +153,12 @@ export default function ModalHistorial({ onClose }: {
     const matchTipo = tipoFiltro === 'todos'
       || (tipoFiltro === 'consumo' && h.delta < 0)
       || (tipoFiltro === 'ingreso' && h.delta > 0);
-    const matchInsumo = !insumoBusc || h.producto_nombre.toLowerCase().includes(insumoBusc.toLowerCase());
-    return matchTipo && matchInsumo;
-  }), [historial, tipoFiltro, insumoBusc]);
+    const matchProducto = productoFiltro === 'todos' || h.producto_id === productoFiltro;
+    return matchTipo && matchProducto;
+  }), [historial, tipoFiltro, productoFiltro]);
 
-  const [prevHistKey, setPrevHistKey] = useState(`${tipoFiltro}|${insumoBusc}|${periodo}`);
-  const histKey = `${tipoFiltro}|${insumoBusc}|${periodo}`;
+  const [prevHistKey, setPrevHistKey] = useState(`${tipoFiltro}|${productoFiltro}|${fechaDesde}|${fechaHasta}`);
+  const histKey = `${tipoFiltro}|${productoFiltro}|${fechaDesde}|${fechaHasta}`;
   if (histKey !== prevHistKey) { setPrevHistKey(histKey); setPaginaHist(1); }
 
   const totalPaginasHist = Math.max(1, Math.ceil(filtrados.length / POR_PAGINA_HISTORIAL));
@@ -131,15 +168,19 @@ export default function ModalHistorial({ onClose }: {
   const totalConsumo = filtrados.filter(h => h.delta < 0).reduce((s, h) => s + Math.abs(h.delta), 0);
   const totalIngreso = filtrados.filter(h => h.delta > 0).reduce((s, h) => s + h.delta, 0);
 
-  const periodoLabel = PERIODO_OPTIONS.find(p => p.key === periodo)?.label ?? periodo;
-  const tipoLabel     = TIPO_OPTIONS.find(t => t.key === tipoFiltro)?.label ?? tipoFiltro;
+  const tipoLabel      = TIPO_OPTIONS.find(t => t.key === tipoFiltro)?.label ?? tipoFiltro;
+  const productoLabel  = productoFiltro === 'todos'
+    ? 'Todos los productos'
+    : (catalogoInsumos.find(p => p.id === productoFiltro)?.nombre ?? 'Todos los productos');
+  const fmtDMY = (ymd: string) => { const [y, m, d] = ymd.split('-'); return `${d}/${m}/${y}`; };
+  const rangoLabel = fechaDesde === fechaHasta ? fmtDMY(fechaDesde) : `${fmtDMY(fechaDesde)} - ${fmtDMY(fechaHasta)}`;
 
-  // Exporta siempre el conjunto ya filtrado (período + tipo + búsqueda de producto)
+  // Exporta siempre el conjunto ya filtrado (rango de fechas + tipo + producto)
   const handleExportarExcel = () => {
     if (exportando || filtrados.length === 0) return;
     setExportando('excel');
     try {
-      exportarHistorialExcel({ items: filtrados, periodoLabel, tipoLabel, busqueda: insumoBusc });
+      exportarHistorialExcel({ items: filtrados, rangoLabel, tipoLabel, productoLabel });
     } finally {
       setExportando(null);
     }
@@ -149,11 +190,18 @@ export default function ModalHistorial({ onClose }: {
     if (exportando || filtrados.length === 0) return;
     setExportando('pdf');
     try {
-      exportarHistorialPdf({ items: filtrados, periodoLabel, tipoLabel, busqueda: insumoBusc, totalConsumo, totalIngreso });
+      exportarHistorialPdf({
+        items: filtrados, rangoLabel, tipoLabel, productoLabel,
+        totalMovimientos: filtrados.length, totalIngreso, totalSalida: totalConsumo,
+      });
     } finally {
       setExportando(null);
     }
   };
+
+  const inputClase = 'w-full px-3 py-2 rounded-xl text-xs outline-none';
+  const inputEstilo = { background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal };
+  const labelClase = 'block text-[10px] font-black uppercase tracking-wide mb-1';
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-2 sm:p-4"
@@ -162,87 +210,85 @@ export default function ModalHistorial({ onClose }: {
         style={{ background: B.white }} onClick={e => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b shrink-0 flex-wrap" style={{ borderColor: B.cream }}>
-          <div className="flex items-center gap-2">
-            <BarChart3 className="w-5 h-5 shrink-0" style={{ color: B.terra }} />
-            <h2 className="text-lg font-bold" style={{ color: B.charcoal }}>Historial de Movimientos</h2>
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-4 border-b shrink-0" style={{ borderColor: B.cream }}>
+          <div className="flex items-center gap-2 min-w-0">
+            <History className="w-5 h-5 shrink-0" style={{ color: B.terra }} />
+            <h2 className="text-lg font-bold truncate" style={{ color: B.charcoal }}>Historial de Movimientos</h2>
           </div>
-          <div className="flex items-center gap-2 ml-auto">
-            <button onClick={handleExportarExcel} disabled={exportando !== null || filtrados.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-opacity"
-              style={{ background: B.green, color: B.cream, opacity: (exportando !== null || filtrados.length === 0) ? 0.5 : 1 }}>
-              {exportando === 'excel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">Excel</span>
-            </button>
-            <button onClick={handleExportarPdf} disabled={exportando !== null || filtrados.length === 0}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-opacity"
-              style={{ background: B.terra, color: B.cream, opacity: (exportando !== null || filtrados.length === 0) ? 0.5 : 1 }}>
-              {exportando === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
-              <span className="hidden sm:inline">PDF</span>
-            </button>
-            <button onClick={onClose} className="p-1.5 rounded-lg shrink-0" style={{ color: B.muted }}
-              onMouseEnter={e => e.currentTarget.style.background = B.cream}
-              onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-              <X className="w-5 h-5" />
-            </button>
-          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg shrink-0" style={{ color: B.muted }}
+            onMouseEnter={e => e.currentTarget.style.background = B.cream}
+            onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+            <X className="w-5 h-5" />
+          </button>
         </div>
 
         {/* Filtros unificados */}
         <div className="px-4 sm:px-6 py-4 shrink-0 space-y-3" style={{ borderBottom: `1px solid ${B.cream}` }}>
-          {/* Fila 1: Período */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <Calendar className="w-4 h-4 shrink-0" style={{ color: B.muted }} />
-            <span className="text-xs font-black uppercase tracking-wide" style={{ color: B.muted }}>Período:</span>
-            {PERIODO_OPTIONS.map(p => (
-              <button key={p.key} onClick={() => setPeriodo(p.key)}
-                className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-                style={periodo === p.key
-                  ? { background: B.charcoal, color: B.cream }
-                  : { background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}>
-                {p.label}
-              </button>
-            ))}
-          </div>
-
-          {/* Fila 2: Tipo + Búsqueda de insumo */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <Filter className="w-4 h-4 shrink-0" style={{ color: B.muted }} />
-            <span className="text-xs font-black uppercase tracking-wide" style={{ color: B.muted }}>Tipo:</span>
-            {TIPO_OPTIONS.map(t => (
-              <button key={t.key} onClick={() => setTipoFiltro(t.key)}
-                className="px-3 py-1.5 rounded-xl text-xs font-bold transition-all"
-                style={tipoFiltro === t.key
-                  ? { background: t.key === 'consumo' ? B.terra : t.key === 'ingreso' ? B.green : B.charcoal, color: B.cream }
-                  : { background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}>
-                {t.label}
-              </button>
-            ))}
-            <div className="flex-1 min-w-40 relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5" style={{ color: B.muted }} />
-              <input value={insumoBusc} onChange={e => setInsumoBusc(e.target.value)}
-                placeholder="Buscar producto..."
-                className="w-full pl-8 pr-3 py-1.5 rounded-xl text-xs outline-none"
-                style={{ background: B.cream, border: `1px solid ${B.creamDark}`, color: B.charcoal }} />
+          {/* Fila 1: Desde / Hasta / Producto / Tipo */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div>
+              <label className={labelClase} style={{ color: B.muted }}>
+                <Calendar className="w-3 h-3 inline mr-1 -mt-0.5" />Desde
+              </label>
+              <input type="date" value={fechaDesde} onChange={e => setFechaDesde(e.target.value)}
+                className={inputClase} style={inputEstilo} />
+            </div>
+            <div>
+              <label className={labelClase} style={{ color: B.muted }}>
+                <Calendar className="w-3 h-3 inline mr-1 -mt-0.5" />Hasta
+              </label>
+              <input type="date" value={fechaHasta} onChange={e => setFechaHasta(e.target.value)}
+                className={inputClase} style={inputEstilo} />
+            </div>
+            <div>
+              <label className={labelClase} style={{ color: B.muted }}>
+                <Package className="w-3 h-3 inline mr-1 -mt-0.5" />Producto
+              </label>
+              <select value={productoFiltro} onChange={e => setProductoFiltro(e.target.value)}
+                className={inputClase} style={inputEstilo}>
+                <option value="todos">Todos los productos</option>
+                {catalogoInsumos.map(p => (
+                  <option key={p.id} value={p.id}>{p.nombre}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className={labelClase} style={{ color: B.muted }}>
+                <Search className="w-3 h-3 inline mr-1 -mt-0.5" />Tipo
+              </label>
+              <select value={tipoFiltro} onChange={e => setTipoFiltro(e.target.value as TipoFiltro)}
+                className={inputClase} style={inputEstilo}>
+                {TIPO_OPTIONS.map(t => (
+                  <option key={t.key} value={t.key}>{t.label}</option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* KPIs del período */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+          {/* KPIs del rango filtrado */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
             <div className="rounded-xl px-4 py-2.5 flex items-center gap-3"
-              style={{ background: '#fef0e6', border: `1px solid ${B.terra}20` }}>
-              <TrendingDown className="w-4 h-4 shrink-0" style={{ color: B.terra }} />
+              style={{ background: '#faf3e0', border: `1px solid ${B.gold}30` }}>
+              <BarChart3 className="w-4 h-4 shrink-0" style={{ color: B.gold }} />
               <div>
-                <p className="text-[10px] font-black uppercase tracking-wide" style={{ color: B.terra }}>Total consumido</p>
-                <p className="text-lg font-black" style={{ color: B.terra }}>{totalConsumo.toFixed(2)}</p>
+                <p className="text-[10px] font-black uppercase tracking-wide" style={{ color: B.gold }}>Total movimientos</p>
+                <p className="text-lg font-black" style={{ color: B.charcoal }}>{filtrados.length}</p>
               </div>
             </div>
             <div className="rounded-xl px-4 py-2.5 flex items-center gap-3"
               style={{ background: '#e8f5e2', border: `1px solid ${B.green}20` }}>
               <TrendingUp className="w-4 h-4 shrink-0" style={{ color: B.green }} />
               <div>
-                <p className="text-[10px] font-black uppercase tracking-wide" style={{ color: B.green }}>Total ingresado</p>
-                <p className="text-lg font-black" style={{ color: B.green }}>{totalIngreso.toFixed(2)}</p>
+                <p className="text-[10px] font-black uppercase tracking-wide" style={{ color: B.green }}>Unidades ingresadas</p>
+                <p className="text-lg font-black" style={{ color: B.green }}>+{totalIngreso.toFixed(2)}</p>
+              </div>
+            </div>
+            <div className="rounded-xl px-4 py-2.5 flex items-center gap-3"
+              style={{ background: '#fef0e6', border: `1px solid ${B.terra}20` }}>
+              <TrendingDown className="w-4 h-4 shrink-0" style={{ color: B.terra }} />
+              <div>
+                <p className="text-[10px] font-black uppercase tracking-wide" style={{ color: B.terra }}>Unidades salidas</p>
+                <p className="text-lg font-black" style={{ color: B.terra }}>-{totalConsumo.toFixed(2)}</p>
               </div>
             </div>
           </div>
@@ -255,13 +301,13 @@ export default function ModalHistorial({ onClose }: {
           ) : filtrados.length === 0 ? (
             <div className="py-16 text-center" style={{ color: B.muted }}>
               <BarChart3 className="w-10 h-10 mx-auto mb-2 opacity-30" />
-              <p className="text-sm">Sin registros en este período</p>
+              <p className="text-sm">Sin registros en este rango</p>
             </div>
           ) : (
-            <table className="w-full min-w-720px">
+            <table className="w-full min-w-900px">
               <thead className="sticky top-0" style={{ background: B.cream }}>
                 <tr>
-                  {['Fecha/Hora', 'Producto', 'Movimiento', 'Stock res.', 'Motivo', 'Usuario'].map(h => (
+                  {['Fecha/Hora', 'Producto', 'Categoría', 'Tipo', 'Motivo', 'Cantidad', 'Stock', 'Usuario'].map(h => (
                     <th key={h} className="text-left px-4 py-3 text-xs font-black uppercase tracking-widest"
                       style={{ color: B.muted }}>{h}</th>
                   ))}
@@ -279,15 +325,24 @@ export default function ModalHistorial({ onClose }: {
                         <span className="text-[10px]">{fmtLimaHora(h.created_at)}</span>
                       </td>
                       <td className="px-4 py-3 text-sm font-semibold" style={{ color: B.charcoal }}>{h.producto_nombre}</td>
+                      <td className="px-4 py-3 text-xs" style={{ color: B.muted }}>{h.categoria}</td>
                       <td className="px-4 py-3">
-                        <span className="flex items-center gap-1 text-sm font-black"
-                          style={{ color: esConsumo ? B.terra : B.green }}>
-                          {esConsumo ? <TrendingDown className="w-3.5 h-3.5" /> : <TrendingUp className="w-3.5 h-3.5" />}
-                          {esConsumo ? '' : '+'}{h.delta.toFixed(2)}
+                        <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-[10px] font-black uppercase"
+                          style={{
+                            background: esConsumo ? '#fef0e6' : '#e8f5e2',
+                            color: esConsumo ? B.terra : B.green,
+                          }}>
+                          {esConsumo ? <TrendingDown className="w-3 h-3" /> : <TrendingUp className="w-3 h-3" />}
+                          {esConsumo ? 'Salida' : 'Entrada'}
                         </span>
                       </td>
-                      <td className="px-4 py-3 text-sm font-bold" style={{ color: B.charcoal }}>{h.stock_resultante.toFixed(2)}</td>
                       <td className="px-4 py-3 text-xs" style={{ color: B.muted }}>{h.observacion ?? '—'}</td>
+                      <td className="px-4 py-3 text-sm font-black" style={{ color: esConsumo ? B.terra : B.green }}>
+                        {esConsumo ? '' : '+'}{h.delta.toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3 text-xs font-semibold whitespace-nowrap" style={{ color: B.charcoal }}>
+                        {h.stock_antes.toFixed(2)} <span style={{ color: B.muted }}>→</span> {h.stock_resultante.toFixed(2)}
+                      </td>
                       <td className="px-4 py-3 text-xs" style={{ color: B.muted }}>{h.usuario_nombre ?? '—'}</td>
                     </tr>
                   );
@@ -298,6 +353,32 @@ export default function ModalHistorial({ onClose }: {
         </div>
         <Paginacion page={paginaHistSegura} totalPages={totalPaginasHist} onChange={setPaginaHist}
           totalItems={filtrados.length} pageSize={POR_PAGINA_HISTORIAL} />
+
+        {/* Pie: total encontrado + acciones */}
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-6 py-3 border-t flex-wrap shrink-0" style={{ borderColor: B.cream }}>
+          <p className="text-xs font-semibold" style={{ color: B.muted }}>
+            {filtrados.length} movimiento{filtrados.length === 1 ? '' : 's'} encontrado{filtrados.length === 1 ? '' : 's'}
+          </p>
+          <div className="flex items-center gap-2">
+            <button onClick={onClose}
+              className="px-3 py-1.5 rounded-xl text-xs font-bold"
+              style={{ background: B.cream, color: B.charcoal, border: `1px solid ${B.creamDark}` }}>
+              Cerrar
+            </button>
+            <button onClick={handleExportarExcel} disabled={exportando !== null || filtrados.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-opacity"
+              style={{ background: B.green, color: B.cream, opacity: (exportando !== null || filtrados.length === 0) ? 0.5 : 1 }}>
+              {exportando === 'excel' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">Excel</span>
+            </button>
+            <button onClick={handleExportarPdf} disabled={exportando !== null || filtrados.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-opacity"
+              style={{ background: B.terra, color: B.cream, opacity: (exportando !== null || filtrados.length === 0) ? 0.5 : 1 }}>
+              {exportando === 'pdf' ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+              <span className="hidden sm:inline">PDF</span>
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

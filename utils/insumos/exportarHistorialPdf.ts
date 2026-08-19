@@ -11,15 +11,16 @@ const GRIS:  [number, number, number] = [120, 120, 120];
 
 interface ExportarHistorialPdfParams {
   items: HistorialItem[];
-  periodoLabel: string;
+  rangoLabel: string;
   tipoLabel: string;
-  busqueda: string;
-  totalConsumo: number;
+  productoLabel: string;
+  totalMovimientos: number;
   totalIngreso: number;
+  totalSalida: number;
 }
 
 export function exportarHistorialPdf(params: ExportarHistorialPdfParams) {
-  const { items, periodoLabel, tipoLabel, busqueda, totalConsumo, totalIngreso } = params;
+  const { items, rangoLabel, tipoLabel, productoLabel, totalMovimientos, totalIngreso, totalSalida } = params;
 
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const pageWidth = doc.internal.pageSize.getWidth();
@@ -42,14 +43,14 @@ export function exportarHistorialPdf(params: ExportarHistorialPdfParams) {
   doc.setFontSize(9);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(...GRIS);
-  const filtroTxt = `Período: ${periodoLabel}   ·   Tipo: ${tipoLabel}${busqueda.trim() ? `   ·   Producto: "${busqueda.trim()}"` : ''}`;
+  const filtroTxt = `Rango: ${rangoLabel}   ·   Tipo: ${tipoLabel}   ·   Producto: ${productoLabel}`;
   doc.text(filtroTxt, margin, 76);
 
   // ── KPIs ─────────────────────────────────────────────────────────────────
   autoTable(doc, {
     startY: 92,
-    head: [['Total consumido', 'Total ingresado']],
-    body: [[totalConsumo.toFixed(2), totalIngreso.toFixed(2)]],
+    head: [['Total movimientos', 'Unidades ingresadas', 'Unidades salidas']],
+    body: [[String(totalMovimientos), totalIngreso.toFixed(2), totalSalida.toFixed(2)]],
     margin: { left: margin, right: margin },
     styles: { fontSize: 9, cellPadding: 6, halign: 'center' },
     headStyles: { fillColor: NEGRO, textColor: 255, fontStyle: 'bold' },
@@ -60,22 +61,24 @@ export function exportarHistorialPdf(params: ExportarHistorialPdfParams) {
   // ── Tabla de movimientos ────────────────────────────────────────────────
   autoTable(doc, {
     startY: startYTabla,
-    head: [['Fecha', 'Hora', 'Producto', 'Movimiento', 'Stock res.', 'Motivo', 'Usuario']],
+    head: [['Fecha', 'Hora', 'Producto', 'Categoría', 'Tipo', 'Motivo', 'Cantidad', 'Stock', 'Usuario']],
     body: items.map(h => [
       fmtLimaFecha(h.created_at),
       fmtLimaHora(h.created_at),
       h.producto_nombre,
-      `${h.delta < 0 ? '' : '+'}${h.delta.toFixed(2)}`,
-      h.stock_resultante.toFixed(2),
+      h.categoria,
+      h.delta < 0 ? 'Salida' : 'Entrada',
       h.observacion ?? '—',
+      `${h.delta < 0 ? '' : '+'}${h.delta.toFixed(2)}`,
+      `${h.stock_antes.toFixed(2)} → ${h.stock_resultante.toFixed(2)}`,
       h.usuario_nombre ?? '—',
     ]),
     margin: { left: margin, right: margin },
-    styles: { fontSize: 8, cellPadding: 4, overflow: 'linebreak' },
+    styles: { fontSize: 7.5, cellPadding: 4, overflow: 'linebreak' },
     headStyles: { fillColor: VERDE, textColor: 255, fontStyle: 'bold' },
     alternateRowStyles: { fillColor: [247, 246, 240] },
     didParseCell: (data) => {
-      if (data.section === 'body' && data.column.index === 3) {
+      if (data.section === 'body' && data.column.index === 4) {
         const item = items[data.row.index];
         if (item) {
           data.cell.styles.textColor = item.delta < 0 ? TERRA : VERDE;
@@ -97,5 +100,6 @@ export function exportarHistorialPdf(params: ExportarHistorialPdfParams) {
   }
 
   const fecha = new Date().toISOString().split('T')[0];
-  doc.save(`historial_movimientos_${periodoLabel}_${tipoLabel}_${fecha}.pdf`);
+  const rangoTxt = rangoLabel.replace(/\//g, '-').replace(/\s+/g, '');
+  doc.save(`historial_movimientos_${rangoTxt}_${tipoLabel}_${fecha}.pdf`);
 }

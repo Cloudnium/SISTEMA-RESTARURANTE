@@ -14,7 +14,9 @@ export interface HistorialItem {
   id: string;
   producto_id: string;
   producto_nombre: string;
+  categoria: string;
   delta: number;           // negativo = consumo, positivo = ingreso
+  stock_antes: number;
   stock_resultante: number;
   observacion: string | null;
   usuario_nombre: string | null;
@@ -73,4 +75,13 @@ export function calcFechaInicioLima(periodo: PeriodoFiltro): string {
   }
 
   return `${yLima}-${String(mLima).padStart(2, '0')}-01`;
+}
+
+// ─── Límite de consulta para un rango Desde/Hasta (mismo bug de 5h de arriba) ───
+// fechaYMD: "YYYY-MM-DD" (hora Lima). diasExtra permite pedir el límite del día
+// SIGUIENTE (para usar con `.lt()` como tope superior exclusivo de "Hasta").
+export function limiteConsultaISO(fechaYMD: string, diasExtra = 0): string {
+  const base = new Date(`${fechaYMD}T00:00:00-05:00`);
+  const limiteReal = new Date(base.getTime() + diasExtra * 24 * 60 * 60 * 1000);
+  return new Date(limiteReal.getTime() - BUG_OFFSET_MS).toISOString();
 }
